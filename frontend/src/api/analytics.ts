@@ -68,6 +68,51 @@ export interface ExportParams {
   store?: string;
 }
 
+// --- New Phase 4 types ---
+
+export interface StoreScorecardData {
+  store_id: string;
+  latest_walk: {
+    id: string;
+    date: string;
+    total_score: number | null;
+    conducted_by: string;
+  } | null;
+  walk_count: number;
+  avg_score: number | null;
+  score_history: Array<{
+    date: string;
+    score: number | null;
+    walk_id: string;
+  }>;
+  section_trends: Array<{
+    section_name: string;
+    monthly: Array<{ month: string; avg_percentage: number }>;
+  }>;
+}
+
+export interface RegionComparison {
+  region_id: string;
+  region_name: string;
+  avg_score: number;
+  walk_count: number;
+  store_count: number;
+  best_store: { id: string; name: string; avg_score: number } | null;
+  worst_store: { id: string; name: string; avg_score: number } | null;
+}
+
+export interface SectionTrendData {
+  section_name: string;
+  points: Array<{ month: string; avg_percentage: number }>;
+}
+
+export interface ReportScheduleData {
+  id: string;
+  frequency: 'weekly' | 'monthly';
+  is_active: boolean;
+  last_sent_at: string | null;
+}
+
 // ---------- API Functions ----------
 
 export async function getOverview(
@@ -115,6 +160,82 @@ export async function getSectionBreakdown(
     }
   );
   return response.data;
+}
+
+export async function getStoreScorecard(
+  orgId: string,
+  storeId: string,
+  period: Period = '1y'
+): Promise<StoreScorecardData> {
+  const response = await api.get<StoreScorecardData>(
+    `/walks/analytics/scorecard/${storeId}/`,
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period },
+    }
+  );
+  return response.data;
+}
+
+export async function getRegionComparison(
+  orgId: string,
+  period: Period = '90d'
+): Promise<RegionComparison[]> {
+  const response = await api.get<RegionComparison[]>(
+    '/walks/analytics/regions/',
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period },
+    }
+  );
+  return response.data;
+}
+
+export async function getSectionTrends(
+  orgId: string,
+  params: SectionParams = {}
+): Promise<SectionTrendData[]> {
+  const response = await api.get<SectionTrendData[]>(
+    '/walks/analytics/section-trends/',
+    {
+      headers: { 'X-Organization': orgId },
+      params,
+    }
+  );
+  return response.data;
+}
+
+export async function getReportSchedules(
+  orgId: string
+): Promise<ReportScheduleData[]> {
+  const response = await api.get<ReportScheduleData[]>(
+    '/walks/analytics/report-schedules/',
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function setReportSchedule(
+  orgId: string,
+  frequency: 'weekly' | 'monthly',
+  isActive: boolean
+): Promise<ReportScheduleData> {
+  const response = await api.post<ReportScheduleData>(
+    '/walks/analytics/report-schedules/',
+    { frequency, is_active: isActive },
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function deleteReportSchedule(
+  orgId: string,
+  frequency: 'weekly' | 'monthly'
+): Promise<void> {
+  await api.delete('/walks/analytics/report-schedules/', {
+    headers: { 'X-Organization': orgId },
+    data: { frequency },
+  });
 }
 
 export async function exportCSV(

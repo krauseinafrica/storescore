@@ -6,7 +6,7 @@ from rest_framework_simplejwt.views import TokenRefreshView as SimpleJWTTokenRef
 
 from apps.core.permissions import IsOrgAdmin, IsOrgMember
 
-from .models import Membership
+from .models import Membership, RegionAssignment, StoreAssignment
 from .serializers import (
     InviteMemberSerializer,
     LoginSerializer,
@@ -73,7 +73,10 @@ class MemberListView(APIView):
     def get(self, request):
         memberships = Membership.objects.filter(
             organization=request.org,
-        ).select_related('user').order_by('created_at')
+        ).select_related('user').prefetch_related(
+            'region_assignments__region',
+            'store_assignments__store',
+        ).order_by('created_at')
         serializer = OrgMemberSerializer(memberships, many=True)
         return Response(serializer.data)
 
@@ -135,7 +138,25 @@ class MemberDetailView(APIView):
         serializer.is_valid(raise_exception=True)
 
         membership.role = serializer.validated_data['role']
-        membership.save(update_fields=['role'])
+        membership.save(update_fields=['role', 'updated_at'])
+
+        # Update region assignments if provided
+        if 'region_ids' in serializer.validated_data:
+            membership.region_assignments.all().delete()
+            for region_id in serializer.validated_data['region_ids']:
+                RegionAssignment.objects.create(
+                    membership=membership,
+                    region_id=region_id,
+                )
+
+        # Update store assignments if provided
+        if 'store_ids' in serializer.validated_data:
+            membership.store_assignments.all().delete()
+            for store_id in serializer.validated_data['store_ids']:
+                StoreAssignment.objects.create(
+                    membership=membership,
+                    store_id=store_id,
+                )
 
         return Response(OrgMemberSerializer(membership).data)
 

@@ -6,7 +6,7 @@ from django.utils.text import slugify
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Membership, Organization, User
+from .models import Membership, Organization, RegionAssignment, StoreAssignment, User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -143,11 +143,19 @@ class LoginSerializer(serializers.Serializer):
 class OrgMemberSerializer(serializers.ModelSerializer):
     """Serializer for listing organization members with user details."""
     user = UserSerializer(read_only=True)
+    assigned_regions = serializers.SerializerMethodField()
+    assigned_stores = serializers.SerializerMethodField()
 
     class Meta:
         model = Membership
-        fields = ['id', 'user', 'role', 'created_at']
+        fields = ['id', 'user', 'role', 'assigned_regions', 'assigned_stores', 'created_at']
         read_only_fields = fields
+
+    def get_assigned_regions(self, obj):
+        return list(obj.region_assignments.values('id', 'region__id', 'region__name'))
+
+    def get_assigned_stores(self, obj):
+        return list(obj.store_assignments.values('id', 'store__id', 'store__name'))
 
 
 class InviteMemberSerializer(serializers.Serializer):
@@ -158,9 +166,22 @@ class InviteMemberSerializer(serializers.Serializer):
     role = serializers.ChoiceField(
         choices=[
             ('admin', 'Admin'),
+            ('regional_manager', 'Regional Manager'),
+            ('store_manager', 'Store Manager'),
             ('manager', 'Manager'),
+            ('finance', 'Finance'),
             ('member', 'Member'),
         ],
+    )
+    region_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    store_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
     )
 
     def validate_email(self, value):
@@ -190,6 +211,8 @@ class InviteMemberSerializer(serializers.Serializer):
         first_name = validated_data['first_name']
         last_name = validated_data['last_name']
         role = validated_data['role']
+        region_ids = validated_data.get('region_ids', [])
+        store_ids = validated_data.get('store_ids', [])
 
         # Get or create user
         user, created = User.objects.get_or_create(
@@ -208,15 +231,40 @@ class InviteMemberSerializer(serializers.Serializer):
             role=role,
         )
 
+        # Create region assignments
+        for region_id in region_ids:
+            RegionAssignment.objects.create(
+                membership=membership,
+                region_id=region_id,
+            )
+
+        # Create store assignments
+        for store_id in store_ids:
+            StoreAssignment.objects.create(
+                membership=membership,
+                store_id=store_id,
+            )
+
         return membership
 
 
 class UpdateMemberRoleSerializer(serializers.Serializer):
-    """Serializer for updating a member's role."""
+    """Serializer for updating a member's role and assignments."""
     role = serializers.ChoiceField(
         choices=[
             ('admin', 'Admin'),
+            ('regional_manager', 'Regional Manager'),
+            ('store_manager', 'Store Manager'),
             ('manager', 'Manager'),
+            ('finance', 'Finance'),
             ('member', 'Member'),
         ],
+    )
+    region_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+    )
+    store_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
     )

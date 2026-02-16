@@ -17,14 +17,20 @@ interface NavItem {
 const ROLE_LABELS: Record<string, string> = {
   owner: 'Owner',
   admin: 'Admin',
+  regional_manager: 'Regional Mgr',
+  store_manager: 'Store Mgr',
   manager: 'Manager',
+  finance: 'Finance',
   member: 'Member',
 };
 
 const ROLE_COLORS: Record<string, string> = {
   owner: 'bg-primary-100 text-primary-700',
   admin: 'bg-violet-100 text-violet-700',
+  regional_manager: 'bg-emerald-100 text-emerald-700',
+  store_manager: 'bg-sky-100 text-sky-700',
   manager: 'bg-blue-100 text-blue-700',
+  finance: 'bg-amber-100 text-amber-700',
   member: 'bg-gray-100 text-gray-600',
 };
 
@@ -47,7 +53,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
     {
       name: 'Stores',
       path: '/stores',
-      enabled: false,
+      enabled: true,
       icon: (
         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
@@ -99,7 +105,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
         </div>
         <div>
           <span className="text-lg font-bold tracking-tight text-gray-900">StoreScore</span>
-          <p className="text-[10px] text-primary-600 font-medium -mt-0.5 tracking-wide">by Ace Hardware</p>
+          <p className="text-[10px] text-primary-600 font-medium -mt-0.5 tracking-wide">for Ace Hardware</p>
         </div>
       </div>
 

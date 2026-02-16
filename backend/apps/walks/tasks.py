@@ -3,8 +3,10 @@ Celery tasks for walk processing — AI summary generation and email notificatio
 """
 
 import logging
+from datetime import timedelta
 
 from celery import shared_task
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -43,3 +45,44 @@ def process_walk_completion(self, walk_id: str, recipient_emails: list[str]):
     if recipient_emails:
         logger.info(f'Sending walk email to {recipient_emails}')
         send_walk_email(walk, summary, recipient_emails)
+
+
+@shared_task(bind=True, max_retries=2, default_retry_delay=60)
+def send_scheduled_digest_reports(self):
+    """
+    Periodic task: check all active ReportSchedule entries
+    and send digest emails where due.
+    - Weekly: sent if last_sent_at is >6 days ago (or never sent)
+    - Monthly: sent if last_sent_at is >27 days ago (or never sent)
+    """
+    from .models import ReportSchedule
+    from .services import send_digest_email
+
+    now = timezone.now()
+    schedules = ReportSchedule.objects.filter(is_active=True).select_related(
+        'user', 'organization'
+    )
+
+    sent_count = 0
+    for schedule in schedules:
+        if schedule.frequency == 'weekly':
+            threshold = now - timedelta(days=6)
+        else:  # monthly
+            threshold = now - timedelta(days=27)
+
+        if schedule.last_sent_at and schedule.last_sent_at > threshold:
+            continue  # not due yet
+
+        try:
+            success = send_digest_email(schedule)
+            if success:
+                schedule.last_sent_at = now
+                schedule.save(update_fields=['last_sent_at'])
+                sent_count += 1
+        except Exception as e:
+            logger.error(
+                f'Failed to send {schedule.frequency} digest to '
+                f'{schedule.user.email} for org {schedule.organization.name}: {e}'
+            )
+
+    logger.info(f'Scheduled digest reports: sent {sent_count} emails')

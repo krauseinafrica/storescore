@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Membership, Organization, User
+from .models import Membership, Organization, RegionAssignment, StoreAssignment, User
 
 
 @admin.register(User)
@@ -30,8 +30,29 @@ class OrganizationAdmin(admin.ModelAdmin):
     prepopulated_fields = {'slug': ('name',)}
 
 
+class RegionAssignmentInline(admin.TabularInline):
+    model = RegionAssignment
+    extra = 0
+
+
+class StoreAssignmentInline(admin.TabularInline):
+    model = StoreAssignment
+    extra = 0
+
+
 @admin.register(Membership)
 class MembershipAdmin(admin.ModelAdmin):
     list_display = ('user', 'organization', 'role', 'created_at')
     list_filter = ('role',)
     search_fields = ('user__email', 'organization__name')
+    inlines = [RegionAssignmentInline, StoreAssignmentInline]
+
+
+@admin.register(RegionAssignment)
+class RegionAssignmentAdmin(admin.ModelAdmin):
+    list_display = ('membership', 'region', 'created_at')
+
+
+@admin.register(StoreAssignment)
+class StoreAssignmentAdmin(admin.ModelAdmin):
+    list_display = ('membership', 'store', 'created_at')

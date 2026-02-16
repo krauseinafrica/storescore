@@ -206,6 +206,40 @@ class WalkSectionNote(TimestampedModel):
         return f'{self.walk} - {self.section.name} notes'
 
 
+class ReportSchedule(TimestampedModel):
+    """A user's subscription to periodic digest report emails."""
+
+    class Frequency(models.TextChoices):
+        WEEKLY = 'weekly', 'Weekly'
+        MONTHLY = 'monthly', 'Monthly'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        'accounts.Organization',
+        on_delete=models.CASCADE,
+        related_name='report_schedules',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name='report_schedules',
+    )
+    frequency = models.CharField(
+        max_length=10,
+        choices=Frequency.choices,
+        default=Frequency.WEEKLY,
+    )
+    is_active = models.BooleanField(default=True)
+    last_sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'walks_reportschedule'
+        unique_together = ('organization', 'user', 'frequency')
+
+    def __str__(self):
+        return f'{self.user.email} - {self.frequency} report ({self.organization.name})'
+
+
 class WalkPhoto(TimestampedModel):
     """A photo taken during a walk as evidence for a section or specific score."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

@@ -6,6 +6,11 @@ import {
   getTrends,
   getStoreComparison,
   getSectionBreakdown,
+  getRegionComparison,
+  getSectionTrends,
+  getReportSchedules,
+  setReportSchedule,
+  deleteReportSchedule,
   exportCSV,
 } from '../api/analytics';
 import type {
@@ -13,6 +18,9 @@ import type {
   TrendPoint,
   StoreRanking,
   SectionBreakdown,
+  RegionComparison,
+  SectionTrendData,
+  ReportScheduleData,
   Period,
 } from '../api/analytics';
 import type { Store } from '../types';
@@ -391,6 +399,10 @@ export default function Reports() {
   const [storeRankings, setStoreRankings] = useState<StoreRanking[]>([]);
   const [sections, setSections] = useState<SectionBreakdown[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
+  const [regionData, setRegionData] = useState<RegionComparison[]>([]);
+  const [sectionTrends, setSectionTrends] = useState<SectionTrendData[]>([]);
+  const [schedules, setSchedules] = useState<ReportScheduleData[]>([]);
+  const [schedulesLoading, setSchedulesLoading] = useState(false);
 
   // Filters
   const [trendStore, setTrendStore] = useState('');
@@ -405,7 +417,34 @@ export default function Reports() {
       .catch(() => setStores([]));
   }, [orgId]);
 
-  // Load overview + store rankings when period changes
+  // Load report schedules
+  useEffect(() => {
+    if (!orgId) return;
+    getReportSchedules(orgId)
+      .then(setSchedules)
+      .catch(() => setSchedules([]));
+  }, [orgId]);
+
+  const handleToggleSchedule = useCallback(async (frequency: 'weekly' | 'monthly') => {
+    if (!orgId || schedulesLoading) return;
+    setSchedulesLoading(true);
+    try {
+      const existing = schedules.find((s) => s.frequency === frequency);
+      if (existing) {
+        await deleteReportSchedule(orgId, frequency);
+        setSchedules((prev) => prev.filter((s) => s.frequency !== frequency));
+      } else {
+        const created = await setReportSchedule(orgId, frequency, true);
+        setSchedules((prev) => [...prev, created]);
+      }
+    } catch {
+      // silently fail
+    } finally {
+      setSchedulesLoading(false);
+    }
+  }, [orgId, schedules, schedulesLoading]);
+
+  // Load overview + store rankings + regions when period changes
   useEffect(() => {
     if (!orgId) {
       setLoading(false);
@@ -417,14 +456,18 @@ export default function Reports() {
 
     async function fetchData() {
       try {
-        const [overviewData, storeData] = await Promise.all([
+        const [overviewData, storeData, regions, secTrends] = await Promise.all([
           getOverview(orgId, period).catch(() => null),
           getStoreComparison(orgId, { period, sort: sortField }).catch(() => []),
+          getRegionComparison(orgId, period).catch(() => []),
+          getSectionTrends(orgId, { period }).catch(() => []),
         ]);
 
         if (!cancelled) {
           setOverview(overviewData);
           setStoreRankings(storeData);
+          setRegionData(regions);
+          setSectionTrends(secTrends);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -520,6 +563,48 @@ export default function Reports() {
             </svg>
             {exporting ? 'Exporting...' : 'Export CSV'}
           </button>
+        </div>
+      </div>
+
+      {/* Digest Subscription */}
+      <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">Email Digest Reports</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Get a summary of store walk activity delivered to your inbox.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleToggleSchedule('weekly')}
+              disabled={schedulesLoading}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                schedules.some((s) => s.frequency === 'weekly')
+                  ? 'bg-primary-600 text-white hover:bg-primary-700'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              Weekly
+            </button>
+            <button
+              onClick={() => handleToggleSchedule('monthly')}
+              disabled={schedulesLoading}
+              className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50 ${
+                schedules.some((s) => s.frequency === 'monthly')
+                  ? 'bg-primary-600 text-white hover:bg-primary-700'
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
+            >
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+              </svg>
+              Monthly
+            </button>
+          </div>
         </div>
       </div>
 
@@ -708,6 +793,107 @@ export default function Reports() {
           </table>
         </div>
       </div>
+
+      {/* Region Comparison */}
+      {regionData.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 mb-6 overflow-hidden">
+          <div className="p-4 sm:p-6 pb-0 sm:pb-0">
+            <h2 className="text-sm font-semibold text-gray-900 mb-4">Regional Comparison</h2>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="text-left text-xs font-medium text-gray-500 px-4 sm:px-6 py-3">Region</th>
+                  <th className="text-left text-xs font-medium text-gray-500 px-4 sm:px-6 py-3">Avg Score</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden sm:table-cell">Stores</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden sm:table-cell">Walks</th>
+                  <th className="text-left text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden lg:table-cell">Best Store</th>
+                  <th className="text-left text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden lg:table-cell">Needs Attention</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {regionData.map((region) => (
+                  <tr key={region.region_id} className="hover:bg-gray-50 transition-colors">
+                    <td className="px-4 sm:px-6 py-3 font-medium text-gray-900">{region.region_name}</td>
+                    <td className="px-4 sm:px-6 py-3">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-16 h-2 rounded-full ${getScoreBarBg(region.avg_score)}`}>
+                          <div
+                            className={`h-2 rounded-full ${getScoreBgColor(region.avg_score)}`}
+                            style={{ width: `${Math.min(100, region.avg_score)}%` }}
+                          />
+                        </div>
+                        <span className={`font-semibold ${getScoreColor(region.avg_score)}`}>
+                          {region.avg_score.toFixed(1)}%
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-4 sm:px-6 py-3 text-center text-gray-500 hidden sm:table-cell">{region.store_count}</td>
+                    <td className="px-4 sm:px-6 py-3 text-center text-gray-500 hidden sm:table-cell">{region.walk_count}</td>
+                    <td className="px-4 sm:px-6 py-3 text-gray-500 hidden lg:table-cell">
+                      {region.best_store ? (
+                        <span className="text-green-600">{region.best_store.name} ({region.best_store.avg_score.toFixed(1)}%)</span>
+                      ) : '--'}
+                    </td>
+                    <td className="px-4 sm:px-6 py-3 text-gray-500 hidden lg:table-cell">
+                      {region.worst_store ? (
+                        <span className="text-amber-600">{region.worst_store.name} ({region.worst_store.avg_score.toFixed(1)}%)</span>
+                      ) : '--'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Section Trends Over Time */}
+      {sectionTrends.length > 0 && sectionTrends.some((s) => s.points.length > 1) && (
+        <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 sm:p-6 mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">Section Score Trends</h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {sectionTrends.filter((s) => s.points.length > 0).map((section) => {
+              const latest = section.points[section.points.length - 1];
+              const first = section.points[0];
+              const diff = latest && first ? latest.avg_percentage - first.avg_percentage : 0;
+              const trend = diff > 2 ? 'up' : diff < -2 ? 'down' : 'stable';
+
+              return (
+                <div key={section.section_name} className="border border-gray-100 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-900 truncate">{section.section_name}</span>
+                    <div className="flex items-center gap-1">
+                      <span className={`text-sm font-bold ${getScoreColor(latest?.avg_percentage ?? 0)}`}>
+                        {latest?.avg_percentage.toFixed(1)}%
+                      </span>
+                      <TrendArrow trend={trend} />
+                    </div>
+                  </div>
+                  {/* Mini sparkline */}
+                  {section.points.length > 1 && (
+                    <div className="flex items-end gap-1 h-8">
+                      {section.points.map((pt, i) => (
+                        <div
+                          key={i}
+                          className={`flex-1 rounded-sm ${getScoreBgColor(pt.avg_percentage)}`}
+                          style={{ height: `${Math.max(4, (pt.avg_percentage / 100) * 32)}px` }}
+                          title={`${pt.month}: ${pt.avg_percentage.toFixed(1)}%`}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-between mt-1">
+                    <span className="text-[10px] text-gray-400">{section.points[0]?.month}</span>
+                    <span className="text-[10px] text-gray-400">{section.points[section.points.length - 1]?.month}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Section Breakdown */}
       <div className="mb-6">

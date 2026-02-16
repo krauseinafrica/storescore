@@ -4,8 +4,12 @@ from rest_framework.routers import DefaultRouter
 from .analytics import (
     ExportCSVView,
     OverviewView,
+    RegionComparisonView,
+    ReportScheduleView,
     SectionBreakdownView,
+    SectionTrendsView,
     StoreComparisonView,
+    StoreScorecardView,
     TrendsView,
 )
 from .views import ScoringTemplateViewSet, WalkViewSet
@@ -21,7 +25,11 @@ analytics_patterns = [
     path('trends/', TrendsView.as_view(), name='analytics-trends'),
     path('stores/', StoreComparisonView.as_view(), name='analytics-stores'),
     path('sections/', SectionBreakdownView.as_view(), name='analytics-sections'),
+    path('section-trends/', SectionTrendsView.as_view(), name='analytics-section-trends'),
+    path('regions/', RegionComparisonView.as_view(), name='analytics-regions'),
+    path('scorecard/<uuid:store_id>/', StoreScorecardView.as_view(), name='analytics-scorecard'),
     path('export/', ExportCSVView.as_view(), name='analytics-export'),
+    path('report-schedules/', ReportScheduleView.as_view(), name='analytics-report-schedules'),
 ]
 
 urlpatterns = [

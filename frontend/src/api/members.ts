@@ -5,7 +5,9 @@ export interface InviteMemberData {
   email: string;
   first_name: string;
   last_name: string;
-  role: 'admin' | 'manager' | 'member';
+  role: string;
+  region_ids?: string[];
+  store_ids?: string[];
 }
 
 export async function getMembers(orgId: string): Promise<OrgMember[]> {
@@ -28,11 +30,12 @@ export async function inviteMember(
 export async function updateMemberRole(
   orgId: string,
   memberId: string,
-  role: string
+  role: string,
+  assignments?: { region_ids?: string[]; store_ids?: string[] }
 ): Promise<OrgMember> {
   const response = await api.patch<OrgMember>(
     `/auth/members/${memberId}/`,
-    { role },
+    { role, ...assignments },
     { headers: { 'X-Organization': orgId } }
   );
   return response.data;

@@ -3,9 +3,12 @@ import type { User, AuthTokens, LoginCredentials, RegisterData, Membership } fro
 import { login as apiLogin, register as apiRegister, getMe } from '../api/client';
 
 const ROLE_HIERARCHY: Record<string, number> = {
-  owner: 4,
-  admin: 3,
-  manager: 2,
+  owner: 7,
+  admin: 6,
+  regional_manager: 5,
+  store_manager: 4,
+  manager: 3,
+  finance: 2,
   member: 1,
 };
 

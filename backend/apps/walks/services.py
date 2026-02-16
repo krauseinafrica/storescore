@@ -3,10 +3,13 @@ Walk summary generation (Claude API) and email notification (Resend).
 """
 
 import logging
+from datetime import timedelta
 
 import anthropic
 import resend
 from django.conf import settings
+from django.db.models import Avg, Count
+from django.utils import timezone
 
 from .models import Walk, WalkSectionNote
 
@@ -298,6 +301,254 @@ def _build_email_html(
     <div style="padding: 24px; text-align: center; border-radius: 0 0 12px 12px; background-color: white;">
         <p style="margin: 0; font-size: 12px; color: #9ca3af;">
             StoreScore by Ace Hardware — Store Quality Management
+        </p>
+    </div>
+
+</div>
+</body>
+</html>'''
+
+
+# ---------- Scheduled Digest Reports ----------
+
+def send_digest_email(schedule) -> bool:
+    """
+    Build and send a digest report email for a ReportSchedule.
+    Returns True if sent successfully.
+    """
+    if not settings.RESEND_API_KEY:
+        logger.warning('RESEND_API_KEY not configured, skipping digest')
+        return False
+
+    resend.api_key = settings.RESEND_API_KEY
+    org = schedule.organization
+    user = schedule.user
+
+    # Determine the period
+    now = timezone.now()
+    if schedule.frequency == 'weekly':
+        start_date = now - timedelta(days=7)
+        period_label = 'Weekly'
+    else:
+        start_date = now - timedelta(days=30)
+        period_label = 'Monthly'
+
+    # Get completed walks in the period
+    walks = Walk.objects.filter(
+        organization=org,
+        status=Walk.Status.COMPLETED,
+        total_score__isnull=False,
+        completed_date__gte=start_date,
+    ).select_related('store', 'store__region', 'conducted_by').order_by('-completed_date')
+
+    walk_count = walks.count()
+    if walk_count == 0:
+        logger.info(
+            f'No walks in period for {user.email} ({org.name}), skipping digest'
+        )
+        return False
+
+    # Aggregate stats
+    agg = walks.aggregate(
+        avg_score=Avg('total_score'),
+        store_count=Count('store', distinct=True),
+    )
+    avg_score = agg['avg_score']
+    store_count = agg['store_count']
+
+    # Top and bottom stores
+    store_rankings = (
+        walks.values('store__name', 'store__id')
+        .annotate(avg=Avg('total_score'), cnt=Count('id'))
+        .order_by('-avg')
+    )
+    top_stores = list(store_rankings[:3])
+    bottom_stores = list(store_rankings.order_by('avg')[:3])
+
+    # Recent walks list (max 10)
+    recent_walks = walks[:10]
+
+    # Build email
+    date_range = f'{start_date.strftime("%b %d")} — {now.strftime("%b %d, %Y")}'
+    subject = f'{period_label} Digest: {org.name} — {date_range}'
+
+    html = _build_digest_html(
+        org_name=org.name,
+        period_label=period_label,
+        date_range=date_range,
+        walk_count=walk_count,
+        store_count=store_count,
+        avg_score=avg_score,
+        top_stores=top_stores,
+        bottom_stores=bottom_stores,
+        recent_walks=recent_walks,
+        user_name=user.first_name or user.email,
+    )
+
+    try:
+        resend.Emails.send({
+            'from': settings.DEFAULT_FROM_EMAIL,
+            'to': [user.email],
+            'subject': subject,
+            'html': html,
+        })
+        logger.info(f'{period_label} digest sent to {user.email} for {org.name}')
+        return True
+    except Exception as e:
+        logger.error(f'Digest email error for {user.email}: {e}')
+        return False
+
+
+def _build_digest_html(
+    org_name: str,
+    period_label: str,
+    date_range: str,
+    walk_count: int,
+    store_count: int,
+    avg_score,
+    top_stores: list,
+    bottom_stores: list,
+    recent_walks,
+    user_name: str,
+) -> str:
+    """Build the HTML email body for a digest report."""
+    avg_display = f'{float(avg_score):.1f}%' if avg_score else 'N/A'
+
+    if avg_score and avg_score >= 80:
+        score_color = '#16a34a'
+    elif avg_score and avg_score >= 60:
+        score_color = '#d97706'
+    else:
+        score_color = '#dc2626'
+
+    # Top stores rows
+    top_rows = ''
+    for i, s in enumerate(top_stores, 1):
+        score = round(float(s['avg']), 1)
+        color = '#16a34a' if score >= 80 else ('#d97706' if score >= 60 else '#dc2626')
+        top_rows += f'''
+        <tr>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px;">#{i}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px;">{s['store__name']}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px; text-align: center; color: {color}; font-weight: 600;">{score}%</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px; text-align: center;">{s['cnt']}</td>
+        </tr>'''
+
+    # Bottom stores rows
+    bottom_rows = ''
+    for i, s in enumerate(bottom_stores, 1):
+        score = round(float(s['avg']), 1)
+        color = '#16a34a' if score >= 80 else ('#d97706' if score >= 60 else '#dc2626')
+        bottom_rows += f'''
+        <tr>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px;">#{i}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px;">{s['store__name']}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px; text-align: center; color: {color}; font-weight: 600;">{score}%</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 14px; text-align: center;">{s['cnt']}</td>
+        </tr>'''
+
+    # Recent walks rows
+    walk_rows = ''
+    for w in recent_walks:
+        score = f'{w.total_score:.1f}%' if w.total_score else 'N/A'
+        color = '#16a34a' if w.total_score and w.total_score >= 80 else ('#d97706' if w.total_score and w.total_score >= 60 else '#dc2626')
+        date = w.completed_date.strftime('%b %d') if w.completed_date else ''
+        evaluator = f'{w.conducted_by.first_name} {w.conducted_by.last_name}'.strip()
+        walk_rows += f'''
+        <tr>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 13px;">{date}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 13px;">{w.store.name}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 13px; text-align: center; color: {color}; font-weight: 600;">{score}</td>
+            <td style="padding: 8px 16px; border-bottom: 1px solid #e5e7eb; font-size: 13px;">{evaluator}</td>
+        </tr>'''
+
+    return f'''<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin: 0; padding: 0; background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+<div style="max-width: 640px; margin: 0 auto; padding: 24px;">
+
+    <!-- Header -->
+    <div style="background-color: #D40029; border-radius: 12px 12px 0 0; padding: 32px 24px; text-align: center;">
+        <h1 style="color: white; margin: 0; font-size: 22px; font-weight: 700;">{period_label} Store Walk Digest</h1>
+        <p style="color: rgba(255,255,255,0.85); margin: 8px 0 0; font-size: 14px;">{org_name} — {date_range}</p>
+    </div>
+
+    <!-- Greeting -->
+    <div style="background-color: white; padding: 24px; border-bottom: 1px solid #e5e7eb;">
+        <p style="margin: 0; font-size: 14px; color: #374151;">Hi {user_name},</p>
+        <p style="margin: 8px 0 0; font-size: 14px; color: #6b7280;">Here's your {period_label.lower()} summary of store walk activity.</p>
+    </div>
+
+    <!-- Stats banner -->
+    <div style="background-color: white; padding: 24px; display: flex; border-bottom: 1px solid #e5e7eb;">
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr>
+                <td style="text-align: center; padding: 16px;">
+                    <p style="margin: 0; font-size: 32px; font-weight: 800; color: #111827;">{walk_count}</p>
+                    <p style="margin: 4px 0 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Walks</p>
+                </td>
+                <td style="text-align: center; padding: 16px;">
+                    <p style="margin: 0; font-size: 32px; font-weight: 800; color: #111827;">{store_count}</p>
+                    <p style="margin: 4px 0 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Stores</p>
+                </td>
+                <td style="text-align: center; padding: 16px;">
+                    <p style="margin: 0; font-size: 32px; font-weight: 800; color: {score_color};">{avg_display}</p>
+                    <p style="margin: 4px 0 0; font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em;">Avg Score</p>
+                </td>
+            </tr>
+        </table>
+    </div>
+
+    <!-- Top Performing Stores -->
+    <div style="background-color: white; padding: 24px 24px 8px;">
+        <h2 style="margin: 0 0 12px; font-size: 16px; color: #111827;">Top Performing Stores</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr style="background-color: #f9fafb;">
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">#</th>
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Store</th>
+                <th style="padding: 8px 16px; text-align: center; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Avg</th>
+                <th style="padding: 8px 16px; text-align: center; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Walks</th>
+            </tr>
+            {top_rows}
+        </table>
+    </div>
+
+    <!-- Needs Improvement -->
+    <div style="background-color: white; padding: 24px 24px 8px;">
+        <h2 style="margin: 0 0 12px; font-size: 16px; color: #111827;">Needs Improvement</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr style="background-color: #f9fafb;">
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">#</th>
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Store</th>
+                <th style="padding: 8px 16px; text-align: center; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Avg</th>
+                <th style="padding: 8px 16px; text-align: center; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Walks</th>
+            </tr>
+            {bottom_rows}
+        </table>
+    </div>
+
+    <!-- Recent Walks -->
+    <div style="background-color: white; padding: 24px 24px 8px;">
+        <h2 style="margin: 0 0 12px; font-size: 16px; color: #111827;">Recent Walks</h2>
+        <table style="width: 100%; border-collapse: collapse;">
+            <tr style="background-color: #f9fafb;">
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Date</th>
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Store</th>
+                <th style="padding: 8px 16px; text-align: center; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">Score</th>
+                <th style="padding: 8px 16px; text-align: left; font-size: 11px; color: #6b7280; text-transform: uppercase; border-bottom: 1px solid #e5e7eb;">By</th>
+            </tr>
+            {walk_rows}
+        </table>
+    </div>
+
+    <!-- Footer -->
+    <div style="padding: 24px; text-align: center; border-radius: 0 0 12px 12px; background-color: white;">
+        <p style="margin: 0 0 8px; font-size: 12px; color: #9ca3af;">
+            StoreScore by Ace Hardware — Store Quality Management
+        </p>
+        <p style="margin: 0; font-size: 11px; color: #d1d5db;">
+            You're receiving this because you subscribed to {period_label.lower()} digest reports.
         </p>
     </div>
 

@@ -1,7 +1,7 @@
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.viewsets import ModelViewSet
 
-from apps.core.permissions import IsOrgAdmin, IsOrgMember
+from apps.core.permissions import IsOrgAdmin, IsOrgMember, get_accessible_store_ids
 
 from .models import Region, Store
 from .serializers import RegionSerializer, StoreSerializer
@@ -17,7 +17,17 @@ class RegionViewSet(ModelViewSet):
         return [IsAuthenticated(), IsOrgAdmin()]
 
     def get_queryset(self):
-        return Region.objects.filter(organization=self.request.org)
+        qs = Region.objects.filter(organization=self.request.org)
+
+        # Regional managers only see their assigned regions
+        membership = getattr(self.request, 'membership', None)
+        if membership and membership.role == 'regional_manager':
+            region_ids = list(
+                membership.region_assignments.values_list('region_id', flat=True)
+            )
+            qs = qs.filter(id__in=region_ids)
+
+        return qs
 
     def perform_create(self, serializer):
         serializer.save(organization=self.request.org)
@@ -34,6 +44,12 @@ class StoreViewSet(ModelViewSet):
 
     def get_queryset(self):
         queryset = Store.objects.filter(organization=self.request.org).select_related('region')
+
+        # Apply role-based store scoping
+        membership = getattr(self.request, 'membership', None)
+        accessible_ids = get_accessible_store_ids(membership)
+        if accessible_ids is not None:
+            queryset = queryset.filter(id__in=accessible_ids)
 
         # Optional filters
         region = self.request.query_params.get('region')

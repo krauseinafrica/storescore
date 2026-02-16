@@ -4,7 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.viewsets import ModelViewSet
 
-from apps.core.permissions import IsOrgAdmin, IsOrgManagerOrAbove, IsOrgMember
+from apps.core.permissions import IsOrgAdmin, IsOrgManagerOrAbove, IsOrgMember, get_accessible_store_ids
 
 from .models import Score, ScoringTemplate, Walk
 from .serializers import (
@@ -64,6 +64,12 @@ class WalkViewSet(ModelViewSet):
         queryset = Walk.objects.filter(
             organization=self.request.org,
         ).select_related('store', 'template', 'conducted_by')
+
+        # Apply role-based store scoping
+        membership = getattr(self.request, 'membership', None)
+        accessible_ids = get_accessible_store_ids(membership)
+        if accessible_ids is not None:
+            queryset = queryset.filter(store_id__in=accessible_ids)
 
         # Optional filters
         store = self.request.query_params.get('store')

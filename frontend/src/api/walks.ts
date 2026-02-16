@@ -1,11 +1,21 @@
 import api from './client';
 import type {
+  Region,
   Store,
   ScoringTemplate,
   Walk,
   WalkPhoto,
   WalkSectionNote,
 } from '../types';
+
+// ---------- Regions ----------
+
+export async function getRegions(orgId: string): Promise<Region[]> {
+  const response = await api.get<Region[]>('/stores/regions/', {
+    headers: { 'X-Organization': orgId },
+  });
+  return response.data;
+}
 
 // ---------- Stores ----------
 

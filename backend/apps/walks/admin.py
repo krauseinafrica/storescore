@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Criterion, Score, ScoringTemplate, Section, Walk
+from .models import Criterion, ReportSchedule, Score, ScoringTemplate, Section, Walk
 
 
 class SectionInline(admin.TabularInline):
@@ -53,3 +53,9 @@ class WalkAdmin(admin.ModelAdmin):
 class ScoreAdmin(admin.ModelAdmin):
     list_display = ('walk', 'criterion', 'points')
     list_filter = ('walk__status',)
+
+
+@admin.register(ReportSchedule)
+class ReportScheduleAdmin(admin.ModelAdmin):
+    list_display = ('user', 'organization', 'frequency', 'is_active', 'last_sent_at')
+    list_filter = ('frequency', 'is_active', 'organization')

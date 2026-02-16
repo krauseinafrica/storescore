@@ -11,17 +11,33 @@ export interface Organization {
   slug: string;
 }
 
+export type Role = 'owner' | 'admin' | 'regional_manager' | 'store_manager' | 'manager' | 'finance' | 'member';
+
 export interface Membership {
   id: string;
   organization: Organization;
-  role: 'owner' | 'admin' | 'manager' | 'member';
+  role: Role;
   created_at?: string;
+}
+
+export interface RegionAssignment {
+  id: string;
+  region__id: string;
+  region__name: string;
+}
+
+export interface StoreAssignment {
+  id: string;
+  store__id: string;
+  store__name: string;
 }
 
 export interface OrgMember {
   id: string;
   user: User;
-  role: 'owner' | 'admin' | 'manager' | 'member';
+  role: Role;
+  assigned_regions: RegionAssignment[];
+  assigned_stores: StoreAssignment[];
   created_at: string;
 }
 

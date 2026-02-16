@@ -63,7 +63,10 @@ class Membership(TimestampedModel):
     class Role(models.TextChoices):
         OWNER = 'owner', 'Owner'
         ADMIN = 'admin', 'Admin'
+        REGIONAL_MANAGER = 'regional_manager', 'Regional Manager'
+        STORE_MANAGER = 'store_manager', 'Store Manager'
         MANAGER = 'manager', 'Manager'
+        FINANCE = 'finance', 'Finance'
         MEMBER = 'member', 'Member'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -89,3 +92,47 @@ class Membership(TimestampedModel):
 
     def __str__(self):
         return f'{self.user.email} - {self.organization.name} ({self.role})'
+
+
+class RegionAssignment(TimestampedModel):
+    """Links a user to specific regions they can access."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    membership = models.ForeignKey(
+        Membership,
+        on_delete=models.CASCADE,
+        related_name='region_assignments',
+    )
+    region = models.ForeignKey(
+        'stores.Region',
+        on_delete=models.CASCADE,
+        related_name='user_assignments',
+    )
+
+    class Meta:
+        db_table = 'accounts_regionassignment'
+        unique_together = ('membership', 'region')
+
+    def __str__(self):
+        return f'{self.membership.user.email} → {self.region.name}'
+
+
+class StoreAssignment(TimestampedModel):
+    """Links a user to specific stores they can access."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    membership = models.ForeignKey(
+        Membership,
+        on_delete=models.CASCADE,
+        related_name='store_assignments',
+    )
+    store = models.ForeignKey(
+        'stores.Store',
+        on_delete=models.CASCADE,
+        related_name='user_assignments',
+    )
+
+    class Meta:
+        db_table = 'accounts_storeassignment'
+        unique_together = ('membership', 'store')
+
+    def __str__(self):
+        return f'{self.membership.user.email} → {self.store.name}'

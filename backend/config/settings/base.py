@@ -136,6 +136,12 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+CELERY_BEAT_SCHEDULE = {
+    'send-scheduled-digest-reports': {
+        'task': 'apps.walks.tasks.send_scheduled_digest_reports',
+        'schedule': 60 * 60 * 6,  # Run every 6 hours
+    },
+}
 
 # CORS
 CORS_ALLOWED_ORIGINS = config(

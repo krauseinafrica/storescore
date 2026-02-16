@@ -5,6 +5,7 @@ import RoleGuard from './components/RoleGuard';
 import Layout from './components/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
+import Stores from './pages/Stores';
 import Reports from './pages/Reports';
 import Team from './pages/Team';
 import WalkList from './pages/walks/WalkList';
@@ -24,6 +25,7 @@ function AppRoutes() {
         <Route element={<Layout />}>
           <Route index element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/stores" element={<Stores />} />
           <Route path="/reports" element={<Reports />} />
           <Route path="/walks" element={<WalkList />} />
           <Route path="/walks/new" element={<NewWalk />} />
