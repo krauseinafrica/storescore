@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Hide scrollbar for section pills and photo rows */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* Disable tap highlight on mobile */
+@layer base {
+  button, a, [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
