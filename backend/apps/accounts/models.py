@@ -4,8 +4,12 @@ from django.contrib.auth.models import AbstractBaseUser, PermissionsMixin
 from django.db import models
 
 from apps.core.models import TimestampedModel
+from apps.core.storage import user_avatar_path
 
 from .managers import CustomUserManager
+
+# Import Lead model so Django discovers it
+from .leads import Lead  # noqa: F401
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -14,6 +18,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     email = models.EmailField(unique=True)
     first_name = models.CharField(max_length=150)
     last_name = models.CharField(max_length=150)
+    avatar = models.ImageField(upload_to=user_avatar_path, blank=True, default='')
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     date_joined = models.DateTimeField(auto_now_add=True)
@@ -36,6 +41,19 @@ class User(AbstractBaseUser, PermissionsMixin):
 
 class Organization(TimestampedModel):
     """An organization that groups users and data."""
+
+    class Industry(models.TextChoices):
+        HARDWARE = 'hardware', 'Hardware / Home Improvement'
+        GROCERY = 'grocery', 'Grocery'
+        CONVENIENCE = 'convenience', 'Convenience Store'
+        RESTAURANT = 'restaurant', 'Restaurant / QSR'
+        RETAIL = 'retail', 'General Retail'
+        PHARMACY = 'pharmacy', 'Pharmacy'
+        AUTOMOTIVE = 'automotive', 'Automotive'
+        FITNESS = 'fitness', 'Fitness / Gym'
+        HOSPITALITY = 'hospitality', 'Hospitality / Hotel'
+        OTHER = 'other', 'Other'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
     slug = models.SlugField(unique=True, max_length=255)
@@ -48,6 +66,21 @@ class Organization(TimestampedModel):
         upload_to='apps.core.storage.org_file_path',
         blank=True,
         default='',
+    )
+    industry = models.CharField(
+        max_length=30,
+        choices=Industry.choices,
+        default=Industry.RETAIL,
+        blank=True,
+    )
+    address = models.CharField(max_length=255, blank=True, default='')
+    city = models.CharField(max_length=100, blank=True, default='')
+    state = models.CharField(max_length=50, blank=True, default='')
+    zip_code = models.CharField(max_length=20, blank=True, default='')
+    phone = models.CharField(max_length=30, blank=True, default='')
+    is_active = models.BooleanField(
+        default=True,
+        help_text='Inactive organizations are disabled and cannot be accessed.',
     )
 
     class Meta:
@@ -68,6 +101,7 @@ class Membership(TimestampedModel):
         MANAGER = 'manager', 'Manager'
         FINANCE = 'finance', 'Finance'
         MEMBER = 'member', 'Member'
+        EVALUATOR = 'evaluator', 'Evaluator'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(

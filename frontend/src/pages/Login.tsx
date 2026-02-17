@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 export default function Login() {
@@ -25,8 +25,10 @@ export default function Login() {
       await login({ email, password });
       navigate('/dashboard', { replace: true });
     } catch (err: any) {
-      if (err.response?.status === 401) {
-        setError('Invalid email or password. Please try again.');
+      if (err.response?.status === 401 || err.response?.status === 400) {
+        const data = err.response?.data;
+        const msg = data?.detail || data?.non_field_errors?.[0] || 'Invalid email or password. Please try again.';
+        setError(msg);
       } else if (err.response?.data?.detail) {
         setError(err.response.data.detail);
       } else {
@@ -42,15 +44,18 @@ export default function Login() {
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
         {/* Logo and heading */}
         <div className="flex justify-center">
-          <div className="flex items-center justify-center w-14 h-14 rounded-xl bg-primary-600 text-white font-bold text-xl shadow-lg shadow-primary-600/30">
-            SS
-          </div>
+          <img
+            src="https://images-media.nyc3.cdn.digitaloceanspaces.com/storescore-files/SS%20Store.png"
+            alt="StoreScore"
+            className="h-[130px] w-auto"
+            loading="eager"
+          />
         </div>
         <h1 className="mt-5 text-center text-2xl font-bold tracking-tight text-gray-900">
           Sign in to StoreScore
         </h1>
         <p className="mt-2 text-center text-sm text-gray-500">
-          Ace Hardware Store Quality Management
+          Store Quality Management Platform
         </p>
       </div>
 
@@ -89,9 +94,14 @@ export default function Login() {
 
             {/* Password field */}
             <div>
-              <label htmlFor="password" className="block text-sm font-medium text-gray-700">
-                Password
-              </label>
+              <div className="flex items-center justify-between">
+                <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                  Password
+                </label>
+                <Link to="/forgot-password" className="text-xs font-medium text-primary-600 hover:text-primary-700">
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 id="password"
                 name="password"

@@ -9,7 +9,7 @@ import csv
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Avg, Count, Max
+from django.db.models import Avg, Count, F, Max, StdDev, Value
 from django.db.models.functions import TruncMonth, TruncWeek
 from django.http import HttpResponse
 from django.utils import timezone
@@ -43,9 +43,8 @@ def _completed_walks_qs(request, period_str=None):
         total_score__isnull=False,
     )
 
-    # Apply role-based store scoping
-    membership = getattr(request, 'membership', None)
-    accessible_ids = get_accessible_store_ids(membership)
+    # Apply role-based store scoping (pass request so platform admins see all)
+    accessible_ids = get_accessible_store_ids(request)
     if accessible_ids is not None:
         qs = qs.filter(store_id__in=accessible_ids)
 
@@ -738,3 +737,130 @@ class ReportScheduleView(APIView):
         if deleted:
             return Response(status=204)
         return Response({'detail': 'Not found'}, status=404)
+
+
+class EvaluatorConsistencyView(APIView):
+    """
+    GET /api/v1/walks/analytics/evaluator-consistency/
+
+    Detect evaluators with suspiciously uniform scoring patterns.
+    Flags evaluators who routinely give the same score (e.g., all 4s or all 5s),
+    indicating they may not be evaluating stores carefully.
+
+    Accepts: ?period=30d|90d|6m|1y|all (default: 90d)
+             ?min_walks=3 (minimum walks to include in analysis)
+
+    Returns per-evaluator:
+    - avg_score, score_std_dev (standard deviation across all criterion scores)
+    - dominant_score (the score value they give most often)
+    - dominant_score_pct (what % of their scores are the dominant value)
+    - unique_score_values (how many distinct score values they use)
+    - flag_level: 'high' (>80% same score), 'medium' (>60%), 'normal'
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get(self, request):
+        period = request.query_params.get('period', '90d')
+        min_walks = int(request.query_params.get('min_walks', '3'))
+
+        walks = _completed_walks_qs(request, period)
+
+        # Get evaluators with enough walks
+        evaluator_data = (
+            walks.values('conducted_by__id', 'conducted_by__first_name', 'conducted_by__last_name', 'conducted_by__email')
+            .annotate(walk_count=Count('id'), avg_total_score=Avg('total_score'))
+            .filter(walk_count__gte=min_walks)
+            .order_by('-walk_count')
+        )
+
+        result = []
+        for ev in evaluator_data:
+            user_id = ev['conducted_by__id']
+            name = f"{ev['conducted_by__first_name']} {ev['conducted_by__last_name']}".strip()
+            if not name:
+                name = ev['conducted_by__email']
+
+            # Get all individual criterion scores for this evaluator's walks
+            ev_walk_ids = walks.filter(conducted_by_id=user_id).values_list('id', flat=True)
+            scores = Score.objects.filter(walk_id__in=ev_walk_ids)
+            total_scores = scores.count()
+
+            if total_scores == 0:
+                continue
+
+            # Aggregate: std dev, distinct values
+            agg = scores.aggregate(
+                score_std_dev=StdDev('points'),
+                avg_points=Avg('points'),
+            )
+            std_dev = float(agg['score_std_dev'] or 0)
+            avg_points = float(agg['avg_points'] or 0)
+
+            # Find dominant score (most frequent value)
+            score_distribution = (
+                scores.values('points')
+                .annotate(count=Count('id'))
+                .order_by('-count')
+            )
+            score_dist_list = list(score_distribution)
+            dominant = score_dist_list[0] if score_dist_list else {'points': 0, 'count': 0}
+            dominant_score = dominant['points']
+            dominant_pct = round((dominant['count'] / total_scores) * 100, 1) if total_scores > 0 else 0
+
+            unique_values = len(score_dist_list)
+
+            # Build distribution map (e.g., {1: 5, 2: 10, 3: 20, 4: 50, 5: 15})
+            distribution = {entry['points']: entry['count'] for entry in score_dist_list}
+
+            # Flag level
+            if dominant_pct >= 80:
+                flag_level = 'high'
+            elif dominant_pct >= 60:
+                flag_level = 'medium'
+            else:
+                flag_level = 'normal'
+
+            # Per-store breakdown: avg score per store for this evaluator
+            store_scores = (
+                walks.filter(conducted_by_id=user_id)
+                .values('store__id', 'store__name')
+                .annotate(avg=Avg('total_score'), cnt=Count('id'))
+                .order_by('-avg')
+            )
+            store_score_range = 0
+            stores_list = []
+            store_avgs = []
+            for ss in store_scores:
+                avg = round(float(ss['avg']), 1) if ss['avg'] else 0
+                store_avgs.append(avg)
+                stores_list.append({
+                    'store_id': str(ss['store__id']),
+                    'store_name': ss['store__name'],
+                    'avg_score': avg,
+                    'walk_count': ss['cnt'],
+                })
+            if store_avgs:
+                store_score_range = round(max(store_avgs) - min(store_avgs), 1)
+
+            result.append({
+                'evaluator_id': str(user_id),
+                'evaluator_name': name,
+                'walk_count': ev['walk_count'],
+                'avg_total_score': round(float(ev['avg_total_score']), 1) if ev['avg_total_score'] else None,
+                'avg_criterion_score': round(avg_points, 2),
+                'score_std_dev': round(std_dev, 2),
+                'dominant_score': dominant_score,
+                'dominant_score_pct': dominant_pct,
+                'unique_score_values': unique_values,
+                'score_distribution': distribution,
+                'flag_level': flag_level,
+                'total_criterion_scores': total_scores,
+                'store_score_range': store_score_range,
+                'stores': stores_list,
+            })
+
+        # Sort: flagged evaluators first
+        flag_order = {'high': 0, 'medium': 1, 'normal': 2}
+        result.sort(key=lambda x: (flag_order.get(x['flag_level'], 2), -x['walk_count']))
+
+        return Response(result)

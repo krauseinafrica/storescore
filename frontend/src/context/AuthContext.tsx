@@ -10,6 +10,7 @@ const ROLE_HIERARCHY: Record<string, number> = {
   manager: 3,
   finance: 2,
   member: 1,
+  evaluator: 1,
 };
 
 export interface AuthContextType {

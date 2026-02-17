@@ -40,6 +40,10 @@ class OrgMiddleware(MiddlewareMixin):
             request.org = organization
             request.membership = membership
         except Membership.DoesNotExist:
-            pass
+            # Platform admins (staff/superuser) can masquerade into any org
+            if request.user.is_staff or request.user.is_superuser:
+                request.org = organization
+                request.membership = None
+            # else: request.org stays None, access denied by permission classes
 
         return None

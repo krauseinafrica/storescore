@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { getWalk, getTemplate, completeWalk } from '../../api/walks';
+import { getWalk, getTemplate, completeWalk, generateWalkSummary } from '../../api/walks';
 import type { Walk, ScoringTemplate, Section, Score } from '../../types';
 import { getOrgId } from '../../utils/org';
 
@@ -40,6 +40,11 @@ export default function WalkReview() {
   const [completed, setCompleted] = useState(false);
   const [completedWalk, setCompletedWalk] = useState<Walk | null>(null);
 
+  // AI Summary
+  const [aiSummary, setAiSummary] = useState('');
+  const [generatingSummary, setGeneratingSummary] = useState(false);
+  const [summaryGenerated, setSummaryGenerated] = useState(false);
+
   // Notification options
   const [emailMe, setEmailMe] = useState(true);
   const [emailEvaluator, setEmailEvaluator] = useState(true);
@@ -60,9 +65,11 @@ export default function WalkReview() {
         if (cancelled) return;
         setWalk(walkData);
 
-        const templateData = await getTemplate(orgId, walkData.template);
-        if (cancelled) return;
-        setTemplate(templateData);
+        if (walkData.template) {
+          const templateData = await getTemplate(orgId, walkData.template);
+          if (cancelled) return;
+          setTemplate(templateData);
+        }
       } catch (err: any) {
         if (!cancelled) {
           setError(
@@ -164,6 +171,23 @@ export default function WalkReview() {
     return 'bg-red-500';
   }
 
+  async function handleGenerateSummary() {
+    if (!walk) return;
+    setGeneratingSummary(true);
+    try {
+      const summary = await generateWalkSummary(orgId, walk.id);
+      setAiSummary(summary);
+      setSummaryGenerated(true);
+    } catch (err: any) {
+      setError(
+        err.response?.data?.detail ||
+          'Failed to generate summary. You can still complete the walk.'
+      );
+    } finally {
+      setGeneratingSummary(false);
+    }
+  }
+
   async function handleComplete() {
     if (!walk) return;
 
@@ -181,6 +205,7 @@ export default function WalkReview() {
         notify_manager: emailMe,
         notify_evaluator: emailEvaluator,
         additional_emails: extraEmails.length > 0 ? extraEmails : undefined,
+        summary: aiSummary.trim() || undefined,
       });
 
       setCompletedWalk(result);
@@ -524,6 +549,66 @@ export default function WalkReview() {
             </div>
           );
         })}
+      </div>
+
+      {/* AI Summary */}
+      <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-4 shadow-sm mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <svg
+              className="w-5 h-5 text-blue-600"
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"
+              />
+            </svg>
+            <h3 className="text-sm font-semibold text-gray-900">
+              AI Walk Summary
+            </h3>
+          </div>
+          {!summaryGenerated && (
+            <button
+              onClick={handleGenerateSummary}
+              disabled={generatingSummary}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-50 text-blue-700 text-xs font-medium hover:bg-blue-100 disabled:opacity-50 transition-colors"
+            >
+              {generatingSummary ? (
+                <>
+                  <div className="w-3 h-3 border-2 border-blue-300 border-t-blue-600 rounded-full animate-spin" />
+                  Generating...
+                </>
+              ) : (
+                'Generate Summary'
+              )}
+            </button>
+          )}
+        </div>
+
+        {summaryGenerated ? (
+          <>
+            <p className="text-xs text-gray-400 mb-2">
+              Review and edit the AI-generated summary below. This will be included in the results email.
+            </p>
+            <textarea
+              value={aiSummary}
+              onChange={(e) => setAiSummary(e.target.value)}
+              rows={10}
+              className="block w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-sm text-gray-900 shadow-sm placeholder:text-gray-400 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none transition-colors resize-y"
+            />
+          </>
+        ) : (
+          <p className="text-xs text-gray-400">
+            {generatingSummary
+              ? 'AI is analyzing your walk data and generating a summary...'
+              : 'Click "Generate Summary" to create an AI-powered summary of your findings. You can edit it before completing the walk.'}
+          </p>
+        )}
       </div>
 
       {/* Notification options */}

@@ -12,11 +12,68 @@ from .models import Membership, Organization, RegionAssignment, StoreAssignment,
 class UserSerializer(serializers.ModelSerializer):
     """Read-only serializer for user details."""
     full_name = serializers.ReadOnlyField()
+    avatar_url = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'date_joined']
+        fields = ['id', 'email', 'first_name', 'last_name', 'full_name', 'is_staff', 'is_superuser', 'date_joined', 'avatar_url']
         read_only_fields = fields
+
+    def get_avatar_url(self, obj):
+        if obj.avatar:
+            return obj.avatar.url
+        return None
+
+
+class ProfileUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for updating own profile."""
+
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name', 'email']
+
+    def validate_email(self, value):
+        value = value.lower()
+        if User.objects.filter(email=value).exclude(id=self.instance.id).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
+
+
+class ChangePasswordSerializer(serializers.Serializer):
+    """Serializer for changing own password."""
+    current_password = serializers.CharField(write_only=True)
+    new_password = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_current_password(self, value):
+        if not self.context['request'].user.check_password(value):
+            raise serializers.ValidationError('Current password is incorrect.')
+        return value
+
+
+class PasswordResetRequestSerializer(serializers.Serializer):
+    """Serializer for requesting a password reset email."""
+    email = serializers.EmailField()
+
+
+class PasswordResetConfirmSerializer(serializers.Serializer):
+    """Serializer for confirming a password reset."""
+    uid = serializers.CharField()
+    token = serializers.CharField()
+    new_password = serializers.CharField(min_length=8)
+
+
+class AdminUserUpdateSerializer(serializers.ModelSerializer):
+    """Serializer for admins editing a user's profile."""
+
+    class Meta:
+        model = User
+        fields = ['first_name', 'last_name', 'email']
+
+    def validate_email(self, value):
+        value = value.lower()
+        if User.objects.filter(email=value).exclude(id=self.instance.id).exists():
+            raise serializers.ValidationError('A user with this email already exists.')
+        return value
 
 
 class OrganizationSerializer(serializers.ModelSerializer):
@@ -25,8 +82,12 @@ class OrganizationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Organization
-        fields = ['id', 'name', 'slug', 'owner', 'created_at', 'updated_at']
-        read_only_fields = ['id', 'slug', 'owner', 'created_at', 'updated_at']
+        fields = [
+            'id', 'name', 'slug', 'owner', 'industry',
+            'address', 'city', 'state', 'zip_code', 'phone',
+            'is_active', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'slug', 'owner', 'is_active', 'created_at', 'updated_at']
 
 
 class MembershipSerializer(serializers.ModelSerializer):

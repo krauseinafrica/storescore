@@ -92,9 +92,11 @@ export default function WalkDetail() {
         if (cancelled) return;
         setWalk(walkData);
 
-        const templateData = await getTemplate(orgId, walkData.template);
-        if (cancelled) return;
-        setTemplate(templateData);
+        if (walkData.template) {
+          const templateData = await getTemplate(orgId, walkData.template);
+          if (cancelled) return;
+          setTemplate(templateData);
+        }
       } catch (err: any) {
         if (!cancelled) {
           setError(
@@ -325,6 +327,33 @@ export default function WalkDetail() {
         </div>
       </div>
 
+      {/* Lock status banner */}
+      {walk.status === 'completed' && (
+        <div className={`rounded-xl p-3 mb-4 flex items-center gap-2 ${
+          walk.is_locked
+            ? 'bg-gray-100 border border-gray-200'
+            : 'bg-amber-50 border border-amber-200'
+        }`}>
+          {walk.is_locked ? (
+            <>
+              <svg className="w-4 h-4 text-gray-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+              </svg>
+              <p className="text-xs text-gray-600">This walk is locked and can no longer be edited.</p>
+            </>
+          ) : walk.lock_date ? (
+            <>
+              <svg className="w-4 h-4 text-amber-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 11V7a4 4 0 118 0m-4 8v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2z" />
+              </svg>
+              <p className="text-xs text-amber-700">
+                Editable until {formatDate(walk.lock_date)}
+              </p>
+            </>
+          ) : null}
+        </div>
+      )}
+
       {/* Walk metadata */}
       <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-4 shadow-sm mb-6">
         <div className="grid grid-cols-2 gap-4 text-sm">
@@ -343,13 +372,50 @@ export default function WalkDetail() {
             </p>
           </div>
           {walk.completed_date && (
-            <div className="col-span-2">
+            <div>
               <p className="text-gray-400 text-xs">Completed</p>
               <p className="font-medium text-gray-900">
                 {formatDateTime(walk.completed_date)}
               </p>
             </div>
           )}
+          {/* Verification Status */}
+          <div>
+            <p className="text-gray-400 text-xs mb-1">Location Verification</p>
+            <div className="flex flex-wrap gap-1.5">
+              {walk.location_verified && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                  GPS Verified
+                </span>
+              )}
+              {walk.qr_verified && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg>
+                  QR Verified
+                </span>
+              )}
+              {!walk.location_verified && !walk.qr_verified && walk.status !== 'scheduled' && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.34 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                  Unverified
+                </span>
+              )}
+              {walk.status === 'scheduled' && (
+                <span className="text-xs text-gray-400">Pending</span>
+              )}
+            </div>
+            {walk.location_distance_meters != null && (
+              <p className="text-[10px] text-gray-400 mt-1">
+                {walk.location_distance_meters < 1000
+                  ? `${Math.round(walk.location_distance_meters)}m from store`
+                  : `${(walk.location_distance_meters / 1000).toFixed(1)}km from store`}
+              </p>
+            )}
+            {walk.qr_scanned_at && (
+              <p className="text-[10px] text-gray-400 mt-0.5">QR scanned {formatDateTime(walk.qr_scanned_at)}</p>
+            )}
+          </div>
         </div>
       </div>
 

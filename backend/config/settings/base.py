@@ -36,6 +36,8 @@ INSTALLED_APPS = [
     'apps.accounts',
     'apps.stores',
     'apps.walks',
+    'apps.billing',
+    'apps.kb',
 ]
 
 MIDDLEWARE = [
@@ -48,6 +50,7 @@ MIDDLEWARE = [
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'apps.core.middleware.OrgMiddleware',
+    'apps.billing.middleware.SubscriptionMiddleware',
 ]
 
 ROOT_URLCONF = 'config.urls'
@@ -141,6 +144,26 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.walks.tasks.send_scheduled_digest_reports',
         'schedule': 60 * 60 * 6,  # Run every 6 hours
     },
+    'check-evaluation-schedules': {
+        'task': 'apps.walks.tasks.check_evaluation_schedules',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'send-evaluation-reminders': {
+        'task': 'apps.walks.tasks.send_evaluation_reminders',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'check-overdue-action-items': {
+        'task': 'apps.walks.tasks.check_overdue_action_items',
+        'schedule': 60 * 60 * 24 * 7,  # Run weekly
+    },
+    'check-trial-expirations': {
+        'task': 'apps.billing.tasks.check_trial_expirations',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'sync-store-counts': {
+        'task': 'apps.billing.tasks.sync_store_counts',
+        'schedule': 60 * 60 * 6,  # Run every 6 hours
+    },
 }
 
 # CORS
@@ -153,6 +176,11 @@ CORS_ALLOW_CREDENTIALS = True
 
 # Claude API (Anthropic)
 ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
+
+# Stripe
+STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY', default='')
+STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='')
+STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='')
 
 # Email (Resend)
 RESEND_API_KEY = config('RESEND_API_KEY', default='')

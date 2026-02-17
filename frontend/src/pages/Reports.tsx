@@ -1,6 +1,7 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { Fragment, useEffect, useState, useMemo, useCallback } from 'react';
 import { getOrgId } from '../utils/org';
 import { getStores } from '../api/walks';
+import InfoButton from '../components/InfoButton';
 import {
   getOverview,
   getTrends,
@@ -11,6 +12,7 @@ import {
   getReportSchedules,
   setReportSchedule,
   deleteReportSchedule,
+  getEvaluatorConsistency,
   exportCSV,
 } from '../api/analytics';
 import type {
@@ -21,6 +23,7 @@ import type {
   RegionComparison,
   SectionTrendData,
   ReportScheduleData,
+  EvaluatorConsistencyData,
   Period,
 } from '../api/analytics';
 import type { Store } from '../types';
@@ -403,6 +406,8 @@ export default function Reports() {
   const [sectionTrends, setSectionTrends] = useState<SectionTrendData[]>([]);
   const [schedules, setSchedules] = useState<ReportScheduleData[]>([]);
   const [schedulesLoading, setSchedulesLoading] = useState(false);
+  const [evaluatorData, setEvaluatorData] = useState<EvaluatorConsistencyData[]>([]);
+  const [evaluatorExpanded, setEvaluatorExpanded] = useState<string | null>(null);
 
   // Filters
   const [trendStore, setTrendStore] = useState('');
@@ -456,11 +461,12 @@ export default function Reports() {
 
     async function fetchData() {
       try {
-        const [overviewData, storeData, regions, secTrends] = await Promise.all([
+        const [overviewData, storeData, regions, secTrends, evalData] = await Promise.all([
           getOverview(orgId, period).catch(() => null),
           getStoreComparison(orgId, { period, sort: sortField }).catch(() => []),
           getRegionComparison(orgId, period).catch(() => []),
           getSectionTrends(orgId, { period }).catch(() => []),
+          getEvaluatorConsistency(orgId, period).catch(() => []),
         ]);
 
         if (!cancelled) {
@@ -468,6 +474,7 @@ export default function Reports() {
           setStoreRankings(storeData);
           setRegionData(regions);
           setSectionTrends(secTrends);
+          setEvaluatorData(evalData);
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -536,7 +543,7 @@ export default function Reports() {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Reports & Analytics</h1>
+          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">Reports & Analytics <InfoButton contextKey="reports-overview" /></h1>
           <p className="mt-0.5 text-sm text-gray-500">
             Insights across all store evaluations.
           </p>
@@ -701,6 +708,51 @@ export default function Reports() {
         <LineChart data={trends} />
       </div>
 
+      {/* Section Trends Over Time */}
+      {sectionTrends.length > 0 && sectionTrends.some((s) => s.points.length > 1) && (
+        <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 sm:p-6 mb-6">
+          <h2 className="text-sm font-semibold text-gray-900 mb-4">Section Score Trends</h2>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {sectionTrends.filter((s) => s.points.length > 0).map((section) => {
+              const latest = section.points[section.points.length - 1];
+              const first = section.points[0];
+              const diff = latest && first ? latest.avg_percentage - first.avg_percentage : 0;
+              const trend = diff > 2 ? 'up' : diff < -2 ? 'down' : 'stable';
+
+              return (
+                <div key={section.section_name} className="border border-gray-100 rounded-lg p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-900 truncate">{section.section_name}</span>
+                    <div className="flex items-center gap-1">
+                      <span className={`text-sm font-bold ${getScoreColor(latest?.avg_percentage ?? 0)}`}>
+                        {latest?.avg_percentage.toFixed(1)}%
+                      </span>
+                      <TrendArrow trend={trend} />
+                    </div>
+                  </div>
+                  {section.points.length > 1 && (
+                    <div className="flex items-end gap-1 h-8">
+                      {section.points.map((pt, i) => (
+                        <div
+                          key={i}
+                          className={`flex-1 rounded-sm ${getScoreBgColor(pt.avg_percentage)}`}
+                          style={{ height: `${Math.max(4, (pt.avg_percentage / 100) * 32)}px` }}
+                          title={`${pt.month}: ${pt.avg_percentage.toFixed(1)}%`}
+                        />
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex justify-between mt-1">
+                    <span className="text-[10px] text-gray-400">{section.points[0]?.month}</span>
+                    <span className="text-[10px] text-gray-400">{section.points[section.points.length - 1]?.month}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Store Rankings Table */}
       <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 mb-6 overflow-hidden">
         <div className="p-4 sm:p-6 pb-0 sm:pb-0">
@@ -849,52 +901,6 @@ export default function Reports() {
         </div>
       )}
 
-      {/* Section Trends Over Time */}
-      {sectionTrends.length > 0 && sectionTrends.some((s) => s.points.length > 1) && (
-        <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 sm:p-6 mb-6">
-          <h2 className="text-sm font-semibold text-gray-900 mb-4">Section Score Trends</h2>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {sectionTrends.filter((s) => s.points.length > 0).map((section) => {
-              const latest = section.points[section.points.length - 1];
-              const first = section.points[0];
-              const diff = latest && first ? latest.avg_percentage - first.avg_percentage : 0;
-              const trend = diff > 2 ? 'up' : diff < -2 ? 'down' : 'stable';
-
-              return (
-                <div key={section.section_name} className="border border-gray-100 rounded-lg p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-900 truncate">{section.section_name}</span>
-                    <div className="flex items-center gap-1">
-                      <span className={`text-sm font-bold ${getScoreColor(latest?.avg_percentage ?? 0)}`}>
-                        {latest?.avg_percentage.toFixed(1)}%
-                      </span>
-                      <TrendArrow trend={trend} />
-                    </div>
-                  </div>
-                  {/* Mini sparkline */}
-                  {section.points.length > 1 && (
-                    <div className="flex items-end gap-1 h-8">
-                      {section.points.map((pt, i) => (
-                        <div
-                          key={i}
-                          className={`flex-1 rounded-sm ${getScoreBgColor(pt.avg_percentage)}`}
-                          style={{ height: `${Math.max(4, (pt.avg_percentage / 100) * 32)}px` }}
-                          title={`${pt.month}: ${pt.avg_percentage.toFixed(1)}%`}
-                        />
-                      ))}
-                    </div>
-                  )}
-                  <div className="flex justify-between mt-1">
-                    <span className="text-[10px] text-gray-400">{section.points[0]?.month}</span>
-                    <span className="text-[10px] text-gray-400">{section.points[section.points.length - 1]?.month}</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
       {/* Section Breakdown */}
       <div className="mb-6">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-4">
@@ -918,6 +924,181 @@ export default function Reports() {
           </div>
         )}
       </div>
+
+      {/* Evaluator Scoring Consistency */}
+      {evaluatorData.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 mb-6 overflow-hidden">
+          <div className="p-4 sm:p-6 pb-3 sm:pb-3">
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold text-gray-900">Evaluator Scoring Patterns</h2>
+              <InfoButton contextKey="evaluator-consistency" />
+            </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Detects evaluators who may score uniformly without thorough assessment. High-flag evaluators give the same score 80%+ of the time.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="text-left text-xs font-medium text-gray-500 px-4 sm:px-6 py-3">Evaluator</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3">Walks</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3">Avg Score</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden sm:table-cell">Most Given Score</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden md:table-cell">Score Variety</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3 hidden lg:table-cell">Std Dev</th>
+                  <th className="text-center text-xs font-medium text-gray-500 px-4 sm:px-6 py-3">Pattern</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {evaluatorData.map((ev) => {
+                  const isExpanded = evaluatorExpanded === ev.evaluator_id;
+                  // Build a mini bar chart from score distribution
+                  const maxCount = Math.max(...Object.values(ev.score_distribution), 1);
+
+                  return (
+                    <Fragment key={ev.evaluator_id}>
+                      <tr
+                        className="hover:bg-gray-50 transition-colors cursor-pointer"
+                        onClick={() => setEvaluatorExpanded(isExpanded ? null : ev.evaluator_id)}
+                      >
+                        <td className="px-4 sm:px-6 py-3">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center text-xs font-bold text-gray-600 flex-shrink-0">
+                              {ev.evaluator_name.charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                              <p className="font-medium text-gray-900 text-sm">{ev.evaluator_name}</p>
+                              <p className="text-[11px] text-gray-400 sm:hidden">
+                                Most: {ev.dominant_score}/5 ({ev.dominant_score_pct}%)
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-center text-gray-600">{ev.walk_count}</td>
+                        <td className="px-4 sm:px-6 py-3 text-center">
+                          <span className={`font-semibold ${ev.avg_total_score ? getScoreColor(ev.avg_total_score) : 'text-gray-400'}`}>
+                            {ev.avg_total_score ? `${ev.avg_total_score.toFixed(1)}%` : '--'}
+                          </span>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-center hidden sm:table-cell">
+                          <span className="font-semibold text-gray-900">{ev.dominant_score}</span>
+                          <span className="text-gray-400 text-xs ml-1">({ev.dominant_score_pct}% of scores)</span>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-center hidden md:table-cell">
+                          <span className={`text-sm ${ev.unique_score_values <= 2 ? 'text-red-600 font-semibold' : ev.unique_score_values <= 3 ? 'text-amber-600' : 'text-gray-600'}`}>
+                            {ev.unique_score_values} values
+                          </span>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-center hidden lg:table-cell">
+                          <span className={`text-sm ${ev.score_std_dev < 0.5 ? 'text-red-600 font-semibold' : ev.score_std_dev < 1.0 ? 'text-amber-600' : 'text-gray-600'}`}>
+                            {ev.score_std_dev.toFixed(2)}
+                          </span>
+                        </td>
+                        <td className="px-4 sm:px-6 py-3 text-center">
+                          {ev.flag_level === 'high' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              Uniform
+                            </span>
+                          ) : ev.flag_level === 'medium' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                              </svg>
+                              Review
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-700">
+                              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                                <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                              </svg>
+                              Normal
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* Expanded detail row */}
+                      {isExpanded && (
+                        <tr>
+                          <td colSpan={7} className="bg-gray-50 px-4 sm:px-6 py-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              {/* Score Distribution */}
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-700 mb-2">Score Distribution</h4>
+                                <div className="space-y-1.5">
+                                  {[1, 2, 3, 4, 5].map((score) => {
+                                    const count = ev.score_distribution[score] || 0;
+                                    const pct = ev.total_criterion_scores > 0 ? (count / ev.total_criterion_scores) * 100 : 0;
+                                    return (
+                                      <div key={score} className="flex items-center gap-2">
+                                        <span className="text-xs font-medium text-gray-500 w-4 text-right">{score}</span>
+                                        <div className="flex-1 h-4 bg-gray-200 rounded-full overflow-hidden">
+                                          <div
+                                            className={`h-full rounded-full transition-all ${
+                                              score === ev.dominant_score ? 'bg-primary-500' : 'bg-gray-400'
+                                            }`}
+                                            style={{ width: `${(count / maxCount) * 100}%` }}
+                                          />
+                                        </div>
+                                        <span className="text-xs text-gray-500 w-16 text-right">
+                                          {count} ({pct.toFixed(0)}%)
+                                        </span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Per-Store Scores */}
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-700 mb-2">
+                                  Scores by Store
+                                  <span className="text-gray-400 font-normal ml-1">
+                                    (range: {ev.store_score_range.toFixed(1)}pts)
+                                  </span>
+                                </h4>
+                                <div className="space-y-1">
+                                  {ev.stores.map((s) => (
+                                    <div key={s.store_id} className="flex items-center justify-between text-xs">
+                                      <span className="text-gray-700 truncate mr-2">{s.store_name}</span>
+                                      <div className="flex items-center gap-2 flex-shrink-0">
+                                        <div className="w-16 h-1.5 bg-gray-200 rounded-full">
+                                          <div
+                                            className={`h-full rounded-full ${getScoreBgColor(s.avg_score)}`}
+                                            style={{ width: `${Math.min(100, s.avg_score)}%` }}
+                                          />
+                                        </div>
+                                        <span className={`font-medium ${getScoreColor(s.avg_score)}`}>
+                                          {s.avg_score.toFixed(1)}%
+                                        </span>
+                                        <span className="text-gray-400">({s.walk_count})</span>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                {ev.store_score_range < 5 && ev.stores.length > 1 && (
+                                  <p className="mt-2 text-[11px] text-amber-600 bg-amber-50 rounded px-2 py-1">
+                                    Low store variance: this evaluator scores all stores within {ev.store_score_range.toFixed(1)} points of each other.
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

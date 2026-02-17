@@ -1,6 +1,9 @@
 from django.contrib import admin
 
-from .models import Criterion, ReportSchedule, Score, ScoringTemplate, Section, Walk
+from .models import (
+    CorrectiveAction, Criterion, Driver, ReportSchedule, Score,
+    ScoringTemplate, Section, SOPCriterionLink, SOPDocument, Walk,
+)
 
 
 class SectionInline(admin.TabularInline):
@@ -59,3 +62,29 @@ class ScoreAdmin(admin.ModelAdmin):
 class ReportScheduleAdmin(admin.ModelAdmin):
     list_display = ('user', 'organization', 'frequency', 'is_active', 'last_sent_at')
     list_filter = ('frequency', 'is_active', 'organization')
+
+
+@admin.register(CorrectiveAction)
+class CorrectiveActionAdmin(admin.ModelAdmin):
+    list_display = ('store', 'action_type', 'escalation_level', 'status', 'days_overdue', 'responsible_user', 'created_at')
+    list_filter = ('action_type', 'escalation_level', 'status', 'organization')
+    search_fields = ('store__name',)
+
+
+@admin.register(SOPDocument)
+class SOPDocumentAdmin(admin.ModelAdmin):
+    list_display = ('title', 'organization', 'file_type', 'is_active', 'uploaded_by', 'created_at')
+    list_filter = ('file_type', 'is_active', 'organization')
+    search_fields = ('title',)
+
+
+class SOPCriterionLinkInline(admin.TabularInline):
+    model = SOPCriterionLink
+    extra = 0
+
+
+@admin.register(Driver)
+class DriverAdmin(admin.ModelAdmin):
+    list_display = ('name', 'criterion', 'organization', 'order', 'is_active')
+    list_filter = ('is_active', 'organization')
+    search_fields = ('name',)

@@ -113,6 +113,28 @@ export interface ReportScheduleData {
   last_sent_at: string | null;
 }
 
+export interface EvaluatorConsistencyData {
+  evaluator_id: string;
+  evaluator_name: string;
+  walk_count: number;
+  avg_total_score: number | null;
+  avg_criterion_score: number;
+  score_std_dev: number;
+  dominant_score: number;
+  dominant_score_pct: number;
+  unique_score_values: number;
+  score_distribution: Record<number, number>;
+  flag_level: 'high' | 'medium' | 'normal';
+  total_criterion_scores: number;
+  store_score_range: number;
+  stores: Array<{
+    store_id: string;
+    store_name: string;
+    avg_score: number;
+    walk_count: number;
+  }>;
+}
+
 // ---------- API Functions ----------
 
 export async function getOverview(
@@ -236,6 +258,21 @@ export async function deleteReportSchedule(
     headers: { 'X-Organization': orgId },
     data: { frequency },
   });
+}
+
+export async function getEvaluatorConsistency(
+  orgId: string,
+  period: Period = '90d',
+  minWalks = 3
+): Promise<EvaluatorConsistencyData[]> {
+  const response = await api.get<EvaluatorConsistencyData[]>(
+    '/walks/analytics/evaluator-consistency/',
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period, min_walks: minWalks },
+    }
+  );
+  return response.data;
 }
 
 export async function exportCSV(
