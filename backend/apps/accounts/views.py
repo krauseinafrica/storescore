@@ -10,6 +10,7 @@ from rest_framework_simplejwt.views import TokenRefreshView as SimpleJWTTokenRef
 
 from apps.core.permissions import IsOrgAdmin, IsOrgMember
 from apps.core.storage import process_uploaded_image
+from apps.core.throttles import LoginRateThrottle, PasswordResetRateThrottle, SignupRateThrottle
 
 from django.db import transaction
 from django.utils.text import slugify
@@ -55,6 +56,7 @@ class LoginView(APIView):
     """Authenticate a user and return JWT tokens."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [LoginRateThrottle]
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data, context={'request': request})
@@ -279,6 +281,7 @@ class PasswordResetRequestView(APIView):
     """Request a password reset email."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [PasswordResetRateThrottle]
 
     def post(self, request):
         serializer = PasswordResetRequestSerializer(data=request.data)
@@ -398,6 +401,7 @@ class SelfServeSignupView(APIView):
     """Self-serve signup: creates User + Org + Membership, returns JWT tokens."""
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_classes = [SignupRateThrottle]
 
     @transaction.atomic
     def post(self, request):
@@ -414,8 +418,15 @@ class SelfServeSignupView(APIView):
         errors = {}
         if not email:
             errors['email'] = 'Email is required.'
-        if not password or len(password) < 8:
-            errors['password'] = 'Password must be at least 8 characters.'
+        if not password:
+            errors['password'] = 'Password is required.'
+        else:
+            from django.contrib.auth.password_validation import validate_password
+            from django.core.exceptions import ValidationError as DjangoValidationError
+            try:
+                validate_password(password)
+            except DjangoValidationError as e:
+                errors['password'] = list(e.messages)
         if not first_name:
             errors['first_name'] = 'First name is required.'
         if not last_name:
@@ -593,6 +604,8 @@ class SupportTicketDetailView(APIView):
 
     def patch(self, request, ticket_id):
         """Update ticket fields (admin only)."""
+        if not (request.user.is_staff or hasattr(request, 'membership') and request.membership and request.membership.role in ('owner', 'admin')):
+            return Response({'detail': 'Admin access required.'}, status=status.HTTP_403_FORBIDDEN)
         ticket = self._get_ticket(request, ticket_id)
         if not ticket:
             return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)

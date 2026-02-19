@@ -10,6 +10,7 @@ from .analytics import (
     OverviewView,
     RegionComparisonView,
     ReportScheduleView,
+    ResolutionAnalyticsView,
     SectionBreakdownView,
     SectionStoreComparisonView,
     SectionTrendsView,
@@ -73,6 +74,7 @@ analytics_patterns = [
     path('evaluator-trends/<uuid:evaluator_id>/', EvaluatorTrendsView.as_view(), name='analytics-evaluator-trends'),
     path('action-items/', ActionItemAnalyticsView.as_view(), name='analytics-action-items'),
     path('drivers/', DriverAnalyticsView.as_view(), name='analytics-drivers'),
+    path('resolution/', ResolutionAnalyticsView.as_view(), name='analytics-resolution'),
 ]
 
 urlpatterns = [

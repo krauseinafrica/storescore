@@ -4,6 +4,7 @@ import { getActionItem, updateActionItem, submitActionItemResponse, verifyAction
 import { getOrgId } from '../utils/org';
 import { useAuth } from '../hooks/useAuth';
 import type { ActionItemDetail as ActionItemDetailType, ActionItemEvent } from '../types';
+import { getSlaLevel, getSlaBgColor, formatResolutionDays } from './reports/reportHelpers';
 
 const PRIORITY_STYLES: Record<string, string> = {
   critical: 'bg-red-100 text-red-700',
@@ -39,13 +40,6 @@ function formatDateTime(dateStr: string): string {
     month: 'short', day: 'numeric', year: 'numeric',
     hour: 'numeric', minute: '2-digit',
   });
-}
-
-function formatResolutionTime(days: number): string {
-  if (days < 0.04) return '< 1 hour';
-  if (days < 1) return `${Math.round(days * 24)} hours`;
-  if (days < 2) return '1 day';
-  return `${Math.round(days)} days`;
 }
 
 const EVENT_ICONS: Record<string, { icon: string; color: string }> = {
@@ -351,7 +345,18 @@ export default function ActionItemDetail() {
           {item.resolution_days != null && (
             <div>
               <span className="text-gray-400">Resolution Time</span>
-              <p className="font-medium text-gray-900">{formatResolutionTime(item.resolution_days)}</p>
+              <div className="flex items-center gap-1.5">
+                <p className="font-medium text-gray-900">{formatResolutionDays(item.resolution_days)}</p>
+                {(() => {
+                  const level = getSlaLevel(item.priority, item.resolution_days);
+                  const label = level === 'green' ? 'Within SLA' : level === 'amber' ? 'Near SLA' : 'Over SLA';
+                  return (
+                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-semibold ${getSlaBgColor(level)}`}>
+                      {label}
+                    </span>
+                  );
+                })()}
+              </div>
             </div>
           )}
           {item.reviewed_at && (

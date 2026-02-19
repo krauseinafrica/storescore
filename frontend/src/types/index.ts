@@ -663,6 +663,8 @@ export interface Challenge {
   is_active: boolean;
   is_ongoing: boolean;
   days_remaining: number;
+  prizes_text: string;
+  section_name: string;
   created_at: string;
 }
 

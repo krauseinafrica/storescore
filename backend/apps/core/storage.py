@@ -122,14 +122,36 @@ def sop_document_path(instance, filename):
     return f'{org_slug}/_sop_documents/{unique}_{filename}'
 
 
+ALLOWED_IMAGE_CONTENT_TYPES = {'image/jpeg', 'image/png', 'image/gif', 'image/webp'}
+ALLOWED_IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.gif', '.webp'}
+
+
 def process_uploaded_image(image_file):
     """Resize and compress an uploaded image to save storage while maintaining detail.
 
+    - Validates file type before processing.
     - Resizes so the longest side is at most MAX_IMAGE_DIMENSION (1920px).
     - Converts to JPEG at JPEG_QUALITY (85) for a good quality/size ratio.
     - Auto-rotates based on EXIF orientation.
     - Returns a new InMemoryUploadedFile ready for saving.
     """
+    import os
+
+    # Validate content type
+    if hasattr(image_file, 'content_type') and image_file.content_type and image_file.content_type not in ALLOWED_IMAGE_CONTENT_TYPES:
+        raise ValueError(f'Unsupported image type: {image_file.content_type}')
+
+    # Validate extension
+    if hasattr(image_file, 'name') and image_file.name:
+        _, ext = os.path.splitext(image_file.name)
+        if ext.lower() not in ALLOWED_IMAGE_EXTENSIONS:
+            raise ValueError(f'Unsupported file extension: {ext}')
+
+    img = Image.open(image_file)
+
+    # Verify it's actually a valid image
+    img.verify()
+    image_file.seek(0)
     img = Image.open(image_file)
 
     # Auto-rotate based on EXIF data (e.g., phone camera rotation)

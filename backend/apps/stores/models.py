@@ -165,6 +165,11 @@ class OrgSettings(TimestampedModel):
         default=False,
         help_text='Enable leaderboards, challenges, and achievements.',
     )
+    gamification_visible_roles = models.JSONField(
+        default=list,
+        blank=True,
+        help_text='Roles that can see gamification features. Empty list means all roles.',
+    )
 
     # Action item default deadlines (in business days)
     action_item_deadline_critical = models.PositiveIntegerField(
@@ -279,6 +284,17 @@ class Challenge(OrgScopedModel):
         related_name='created_challenges',
     )
     is_active = models.BooleanField(default=True)
+    prizes_text = models.TextField(
+        blank=True,
+        default='',
+        help_text='Description of prizes or rewards for challenge winners.',
+    )
+    section_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default='',
+        help_text='If set, only scores from this template section are used for standings.',
+    )
 
     class Meta:
         db_table = 'stores_challenge'

@@ -50,6 +50,50 @@ export const trendConfig: ChartConfig = {
   walk_count: { label: 'Evaluations', color: COLORS.violet },
 };
 
+// ---------- SLA Helpers ----------
+
+export const SLA_THRESHOLDS: Record<string, { green: number; amber: number }> = {
+  critical: { green: 1, amber: 3 },
+  high: { green: 3, amber: 7 },
+  medium: { green: 7, amber: 14 },
+  low: { green: 14, amber: 30 },
+};
+
+export type SlaLevel = 'green' | 'amber' | 'red';
+
+export function getSlaLevel(priority: string, days: number): SlaLevel {
+  const thresholds = SLA_THRESHOLDS[priority] || SLA_THRESHOLDS.medium;
+  if (days <= thresholds.green) return 'green';
+  if (days <= thresholds.amber) return 'amber';
+  return 'red';
+}
+
+export function getSlaTextColor(level: SlaLevel): string {
+  if (level === 'green') return 'text-green-600';
+  if (level === 'amber') return 'text-amber-600';
+  return 'text-red-600';
+}
+
+export function getSlaBgColor(level: SlaLevel): string {
+  if (level === 'green') return 'bg-green-100 text-green-700';
+  if (level === 'amber') return 'bg-amber-100 text-amber-700';
+  return 'bg-red-100 text-red-700';
+}
+
+export function getSlaHex(level: SlaLevel): string {
+  if (level === 'green') return '#16a34a';
+  if (level === 'amber') return '#d97706';
+  return '#dc2626';
+}
+
+export function formatResolutionDays(days: number | null): string {
+  if (days == null) return 'N/A';
+  if (days < 0.04) return '< 1h';
+  if (days < 1) return `${Math.round(days * 24)}h`;
+  if (days < 2) return '1d';
+  return `${Math.round(days)}d`;
+}
+
 // ---------- Helpers ----------
 
 export function getScoreColor(pct: number): string {

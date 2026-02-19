@@ -477,6 +477,7 @@ export interface OrgSettingsData {
   allow_benchmarking: boolean;
   benchmarking_period_days: number;
   gamification_enabled: boolean;
+  gamification_visible_roles: string[];
   action_item_deadline_critical: number;
   action_item_deadline_high: number;
   action_item_deadline_medium: number;

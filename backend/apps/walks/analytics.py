@@ -6,6 +6,7 @@ section-level breakdowns, and CSV export.
 """
 
 import csv
+import statistics
 from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
@@ -359,6 +360,12 @@ class StoreScorecardView(APIView):
                 'avg_score': None,
                 'score_history': [],
                 'section_trends': [],
+                'action_items': {
+                    'total': 0,
+                    'open': 0,
+                    'resolved': 0,
+                    'avg_resolution_days': None,
+                },
             })
 
         # Latest walk
@@ -436,6 +443,29 @@ class StoreScorecardView(APIView):
                 'monthly': section_monthly,
             })
 
+        # Action items for this store
+        store_action_items = ActionItem.objects.filter(
+            organization=request.org,
+            walk_id__in=walk_ids,
+        )
+        ai_total = store_action_items.count()
+        ai_open = store_action_items.filter(
+            status__in=['open', 'in_progress'],
+        ).count()
+        ai_resolved = store_action_items.filter(
+            status__in=['resolved', 'pending_review', 'approved'],
+        ).count()
+        ai_avg_resolution = None
+        resolved_ai = store_action_items.filter(
+            resolved_at__isnull=False,
+        )
+        if resolved_ai.exists():
+            res_days = []
+            for ai in resolved_ai:
+                delta = ai.resolved_at - ai.created_at
+                res_days.append(delta.total_seconds() / 86400)
+            ai_avg_resolution = round(sum(res_days) / len(res_days), 1) if res_days else None
+
         return Response({
             'store_id': str(store_id),
             'latest_walk': latest_data,
@@ -443,6 +473,12 @@ class StoreScorecardView(APIView):
             'avg_score': round(float(agg['avg_score']), 1) if agg['avg_score'] else None,
             'score_history': score_history,
             'section_trends': section_trends,
+            'action_items': {
+                'total': ai_total,
+                'open': ai_open,
+                'resolved': ai_resolved,
+                'avg_resolution_days': ai_avg_resolution,
+            },
         })
 
 
@@ -1118,6 +1154,8 @@ class ActionItemAnalyticsView(APIView):
                 'open': 0,
                 'in_progress': 0,
                 'resolved': 0,
+                'pending_review': 0,
+                'approved': 0,
                 'dismissed': 0,
                 'avg_resolution_days': None,
                 'by_store': [],
@@ -1215,6 +1253,8 @@ class ActionItemAnalyticsView(APIView):
             'open': status_counts.get('open', 0),
             'in_progress': status_counts.get('in_progress', 0),
             'resolved': status_counts.get('resolved', 0),
+            'pending_review': status_counts.get('pending_review', 0),
+            'approved': status_counts.get('approved', 0),
             'dismissed': status_counts.get('dismissed', 0),
             'avg_resolution_days': avg_resolution,
             'by_store': store_list,
@@ -1356,4 +1396,288 @@ class DriverAnalyticsView(APIView):
             'by_section': by_section,
             'by_store': store_list,
             'monthly_trend': monthly_list,
+        })
+
+
+# SLA thresholds in days: {priority: (green_max, amber_max)}
+# red = anything above amber_max
+SLA_THRESHOLDS = {
+    'critical': (1, 3),
+    'high': (3, 7),
+    'medium': (7, 14),
+    'low': (14, 30),
+}
+
+
+class ResolutionAnalyticsView(APIView):
+    """
+    GET /api/v1/walks/analytics/resolution/
+
+    Resolution time analytics: how quickly action items get resolved,
+    broken down by priority level with SLA compliance tracking.
+
+    Accepts: ?period=90d|6m|1y|all (default: 90d)
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get(self, request):
+        period = request.query_params.get('period', '90d')
+        start_date = _parse_period(period)
+
+        # Base queryset: all action items in this org within the period
+        items = ActionItem.objects.filter(organization=request.org)
+
+        # Apply role-based store scoping
+        accessible_ids = get_accessible_store_ids(request)
+        if accessible_ids is not None:
+            items = items.filter(
+                models_Q(walk__store_id__in=accessible_ids)
+                | models_Q(store_id__in=accessible_ids)
+            )
+
+        if start_date is not None:
+            items = items.filter(created_at__gte=start_date)
+
+        total = items.count()
+        if total == 0:
+            return Response({
+                'summary': {
+                    'avg_resolution_days': None,
+                    'median_resolution_days': None,
+                    'total_resolved': 0,
+                    'total_approved': 0,
+                    'avg_approval_days': None,
+                },
+                'by_priority': [],
+                'by_store': [],
+                'by_region': [],
+                'monthly_trend': [],
+            })
+
+        # ---- Summary ----
+        resolved_items = list(
+            items.filter(
+                resolved_at__isnull=False,
+            ).values_list('created_at', 'resolved_at')
+        )
+        resolution_days_list = [
+            (resolved - created).total_seconds() / 86400
+            for created, resolved in resolved_items
+        ]
+        total_resolved = len(resolution_days_list)
+
+        avg_resolution = (
+            round(sum(resolution_days_list) / total_resolved, 1)
+            if total_resolved > 0 else None
+        )
+        median_resolution = (
+            round(statistics.median(resolution_days_list), 1)
+            if total_resolved > 0 else None
+        )
+
+        # Approved items (reviewed/signed off)
+        approved_items = list(
+            items.filter(
+                status=ActionItem.Status.APPROVED,
+                reviewed_at__isnull=False,
+            ).values_list('created_at', 'reviewed_at')
+        )
+        total_approved = len(approved_items)
+        approval_days_list = [
+            (reviewed - created).total_seconds() / 86400
+            for created, reviewed in approved_items
+        ]
+        avg_approval = (
+            round(sum(approval_days_list) / total_approved, 1)
+            if total_approved > 0 else None
+        )
+
+        summary = {
+            'avg_resolution_days': avg_resolution,
+            'median_resolution_days': median_resolution,
+            'total_resolved': total_resolved,
+            'total_approved': total_approved,
+            'avg_approval_days': avg_approval,
+        }
+
+        # ---- By Priority ----
+        priority_order = ['critical', 'high', 'medium', 'low']
+        by_priority = []
+        for prio in priority_order:
+            prio_items = items.filter(priority=prio)
+            prio_count = prio_items.count()
+            if prio_count == 0:
+                continue
+
+            prio_resolved = list(
+                prio_items.filter(
+                    resolved_at__isnull=False,
+                ).values_list('created_at', 'resolved_at')
+            )
+            prio_days = [
+                (resolved - created).total_seconds() / 86400
+                for created, resolved in prio_resolved
+            ]
+            resolved_count = len(prio_days)
+            avg_days = round(sum(prio_days) / resolved_count, 1) if resolved_count > 0 else None
+            median_days = round(statistics.median(prio_days), 1) if resolved_count > 0 else None
+
+            # SLA compliance
+            green_max, amber_max = SLA_THRESHOLDS.get(prio, (7, 14))
+            sla_met = sum(1 for d in prio_days if d <= green_max)
+            sla_met_pct = round((sla_met / resolved_count) * 100, 1) if resolved_count > 0 else 0
+
+            by_priority.append({
+                'priority': prio,
+                'count': prio_count,
+                'resolved_count': resolved_count,
+                'avg_days': avg_days,
+                'median_days': median_days,
+                'sla_met_count': sla_met,
+                'sla_met_pct': sla_met_pct,
+            })
+
+        # ---- By Store ----
+        # Get store info from walk or direct store FK
+        store_items_walk = (
+            items.filter(walk__store__isnull=False)
+            .values('walk__store__id', 'walk__store__name')
+            .annotate(
+                total=Count('id'),
+                resolved=Count('id', filter=models_Q(resolved_at__isnull=False)),
+                critical_open=Count(
+                    'id',
+                    filter=models_Q(priority='critical', status__in=['open', 'in_progress']),
+                ),
+                high_open=Count(
+                    'id',
+                    filter=models_Q(priority='high', status__in=['open', 'in_progress']),
+                ),
+            )
+            .order_by('-total')
+        )
+
+        by_store = []
+        for s in store_items_walk:
+            store_id = s['walk__store__id']
+            # Calculate avg resolution for this store
+            store_resolved = list(
+                items.filter(
+                    walk__store_id=store_id,
+                    resolved_at__isnull=False,
+                ).values_list('created_at', 'resolved_at')
+            )
+            store_res_days = [
+                (resolved - created).total_seconds() / 86400
+                for created, resolved in store_resolved
+            ]
+            store_avg_res = (
+                round(sum(store_res_days) / len(store_res_days), 1)
+                if store_res_days else None
+            )
+
+            by_store.append({
+                'store_id': str(store_id),
+                'store_name': s['walk__store__name'],
+                'total': s['total'],
+                'resolved': s['resolved'],
+                'avg_resolution_days': store_avg_res,
+                'critical_open': s['critical_open'],
+                'high_open': s['high_open'],
+            })
+
+        # ---- By Region ----
+        region_items = (
+            items.filter(walk__store__region__isnull=False)
+            .values('walk__store__region__id', 'walk__store__region__name')
+            .annotate(
+                total=Count('id'),
+                resolved=Count('id', filter=models_Q(resolved_at__isnull=False)),
+            )
+            .order_by('-total')
+        )
+
+        by_region = []
+        for r in region_items:
+            region_id = r['walk__store__region__id']
+            region_resolved = list(
+                items.filter(
+                    walk__store__region_id=region_id,
+                    resolved_at__isnull=False,
+                ).values_list('created_at', 'resolved_at')
+            )
+            region_days = [
+                (resolved - created).total_seconds() / 86400
+                for created, resolved in region_resolved
+            ]
+            region_avg = (
+                round(sum(region_days) / len(region_days), 1)
+                if region_days else None
+            )
+
+            by_region.append({
+                'region_id': str(region_id),
+                'region_name': r['walk__store__region__name'],
+                'total': r['total'],
+                'resolved': r['resolved'],
+                'avg_resolution_days': region_avg,
+            })
+
+        # ---- Monthly Trend ----
+        monthly_created = (
+            items.annotate(month=TruncMonth('created_at'))
+            .values('month')
+            .annotate(created_count=Count('id'))
+            .order_by('month')
+        )
+        created_map = {
+            m['month'].strftime('%Y-%m'): m['created_count']
+            for m in monthly_created
+        }
+
+        # Monthly resolved counts and avg resolution
+        monthly_resolved_qs = (
+            items.filter(resolved_at__isnull=False)
+            .annotate(month=TruncMonth('resolved_at'))
+            .values('month')
+            .annotate(resolved_count=Count('id'))
+            .order_by('month')
+        )
+        resolved_map = {
+            m['month'].strftime('%Y-%m'): m['resolved_count']
+            for m in monthly_resolved_qs
+        }
+
+        # Compute avg resolution per month (by resolution month)
+        resolved_with_dates = (
+            items.filter(resolved_at__isnull=False)
+            .annotate(month=TruncMonth('resolved_at'))
+            .values_list('month', 'created_at', 'resolved_at')
+        )
+        month_days_map = defaultdict(list)
+        for month, created, resolved in resolved_with_dates:
+            month_key = month.strftime('%Y-%m')
+            days = (resolved - created).total_seconds() / 86400
+            month_days_map[month_key].append(days)
+
+        all_months = sorted(set(list(created_map.keys()) + list(resolved_map.keys())))
+        monthly_trend = []
+        for month_key in all_months:
+            days_list = month_days_map.get(month_key, [])
+            monthly_trend.append({
+                'month': month_key,
+                'avg_resolution_days': (
+                    round(sum(days_list) / len(days_list), 1)
+                    if days_list else None
+                ),
+                'resolved_count': resolved_map.get(month_key, 0),
+                'created_count': created_map.get(month_key, 0),
+            })
+
+        return Response({
+            'summary': summary,
+            'by_priority': by_priority,
+            'by_store': by_store,
+            'by_region': by_region,
+            'monthly_trend': monthly_trend,
         })

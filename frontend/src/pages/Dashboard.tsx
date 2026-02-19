@@ -2,14 +2,16 @@ import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useSubscription } from '../hooks/useSubscription';
+import { isGamificationVisibleForRole } from '../hooks/useOrgSettings';
 import InfoButton from '../components/InfoButton';
 import { getStores, getWalks, getTemplates, getBenchmarking, getActionItems, getCorrectiveActionSummary, getOrgSettings, getAssessments } from '../api/walks';
 import type { BenchmarkData, OrgSettingsData } from '../api/walks';
-import { getSectionBreakdown, getSectionTrends } from '../api/analytics';
-import type { SectionBreakdown, SectionTrendData } from '../api/analytics';
+import { getSectionBreakdown, getSectionTrends, getResolutionAnalytics } from '../api/analytics';
+import type { SectionBreakdown, SectionTrendData, ResolutionAnalyticsData } from '../api/analytics';
 import { getLeaderboard, getChallenges, getAwardedAchievements } from '../api/gamification';
 import { getOrgId } from '../utils/org';
 import type { Walk, Store, ScoringTemplate, ActionItem, CorrectiveActionSummary, LeaderboardEntry, Challenge, AwardedAchievement, SelfAssessment } from '../types';
+import { formatResolutionDays, getSlaLevel, getSlaHex } from './reports/reportHelpers';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -37,7 +39,7 @@ function getScoreColor(pct: number): string {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, currentMembership } = useAuth();
   const { hasFeature } = useSubscription();
   const orgId = getOrgId();
 
@@ -57,6 +59,7 @@ export default function Dashboard() {
   const [activeChallenges, setActiveChallenges] = useState<Challenge[]>([]);
   const [recentAwards, setRecentAwards] = useState<AwardedAchievement[]>([]);
   const [assessments, setAssessments] = useState<SelfAssessment[]>([]);
+  const [resolutionData, setResolutionData] = useState<ResolutionAnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);
   const [rankAsc, setRankAsc] = useState(true);
   const [evalMenuOpen, setEvalMenuOpen] = useState(false);
@@ -83,7 +86,7 @@ export default function Dashboard() {
 
     async function fetchAll() {
       try {
-        const [storeData, walkData, templateData, benchData, aiData, caData, sbData, stData, settingsData, assessmentData] = await Promise.all([
+        const [storeData, walkData, templateData, benchData, aiData, caData, sbData, stData, settingsData, assessmentData, resData] = await Promise.all([
           getStores(orgId).catch(() => [] as Store[]),
           getWalks(orgId).catch(() => [] as Walk[]),
           getTemplates(orgId).catch(() => [] as ScoringTemplate[]),
@@ -94,6 +97,7 @@ export default function Dashboard() {
           getSectionTrends(orgId, { period: '6m' }).catch(() => [] as SectionTrendData[]),
           getOrgSettings(orgId).catch(() => null),
           getAssessments(orgId).catch(() => [] as SelfAssessment[]),
+          getResolutionAnalytics(orgId, '90d').catch(() => null),
         ]);
 
         if (!cancelled) {
@@ -107,9 +111,11 @@ export default function Dashboard() {
           setSectionTrends(stData);
           setOrgSettings(settingsData);
           setAssessments(assessmentData);
+          setResolutionData(resData);
 
-          // Fetch gamification data based on plan tier and org toggle
-          if (settingsData?.gamification_enabled && hasGamificationBasic) {
+          // Fetch gamification data based on plan tier, org toggle, and role visibility
+          const gamificationVisible = isGamificationVisibleForRole(settingsData, currentMembership?.role);
+          if (settingsData?.gamification_enabled && hasGamificationBasic && gamificationVisible) {
             const promises: [
               Promise<LeaderboardEntry[]>,
               Promise<Challenge[]>,
@@ -510,6 +516,62 @@ export default function Dashboard() {
             </div>
           )}
 
+          {/* Resolution Speed Widget */}
+          {resolutionData && resolutionData.summary.total_resolved > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-900">Resolution Speed</h2>
+                <Link to="/reports#action-items" className="text-xs font-medium text-primary-600 hover:text-primary-700">
+                  Details
+                </Link>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+                <div className="flex items-center gap-4 mb-3">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-gray-900">
+                      {formatResolutionDays(resolutionData.summary.avg_resolution_days)}
+                    </p>
+                    <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Avg</p>
+                  </div>
+                  <div className="w-px h-8 bg-gray-200" />
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-gray-900">
+                      {formatResolutionDays(resolutionData.summary.median_resolution_days)}
+                    </p>
+                    <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Median</p>
+                  </div>
+                  <div className="w-px h-8 bg-gray-200" />
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-green-600">
+                      {resolutionData.summary.total_resolved}
+                    </p>
+                    <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Resolved</p>
+                  </div>
+                </div>
+
+                {resolutionData.by_priority.length > 0 && (
+                  <div className="space-y-1.5">
+                    {resolutionData.by_priority.map((p) => {
+                      const level = p.avg_days != null ? getSlaLevel(p.priority, p.avg_days) : ('green' as const);
+                      return (
+                        <div key={p.priority} className="flex items-center justify-between text-xs">
+                          <span className="capitalize text-gray-600 font-medium">{p.priority}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-gray-900 font-semibold">{formatResolutionDays(p.avg_days)}</span>
+                            <span
+                              className="w-2 h-2 rounded-full flex-shrink-0"
+                              style={{ backgroundColor: getSlaHex(level) }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Store Rankings Widget */}
           {benchmark?.enabled && benchmark.my_stores && benchmark.my_stores.length > 0 && (
             <div>
@@ -582,7 +644,7 @@ export default function Dashboard() {
           )}
 
           {/* Mini Leaderboard Widget (Enterprise only) */}
-          {orgSettings?.gamification_enabled && hasGamificationAdvanced && leaderboard.length > 0 && (
+          {orgSettings?.gamification_enabled && hasGamificationAdvanced && isGamificationVisibleForRole(orgSettings, currentMembership?.role) && leaderboard.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-gray-900">Leaderboard</h2>
@@ -612,7 +674,7 @@ export default function Dashboard() {
           )}
 
           {/* Active Challenge Widget (Enterprise only) */}
-          {orgSettings?.gamification_enabled && hasGamificationAdvanced && activeChallenges.length > 0 && (
+          {orgSettings?.gamification_enabled && hasGamificationAdvanced && isGamificationVisibleForRole(orgSettings, currentMembership?.role) && activeChallenges.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-gray-900">Active Challenge</h2>
@@ -648,7 +710,7 @@ export default function Dashboard() {
           )}
 
           {/* Recent Badges Widget (Pro+ with gamification_basic) */}
-          {orgSettings?.gamification_enabled && hasGamificationBasic && recentAwards.length > 0 && (
+          {orgSettings?.gamification_enabled && hasGamificationBasic && isGamificationVisibleForRole(orgSettings, currentMembership?.role) && recentAwards.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold text-gray-900">Recent Badges</h2>

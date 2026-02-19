@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useOrgSettings, isGamificationVisibleForRole } from '../hooks/useOrgSettings';
 import { getOnboardingProgress } from '../api/onboarding';
 
 interface SidebarProps {
@@ -45,12 +46,14 @@ const ROLE_COLORS: Record<string, string> = {
 
 export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
   const { user, logout, hasRole, currentMembership } = useAuth();
+  const { settings: orgSettings } = useOrgSettings();
   const navigate = useNavigate();
 
   const isAdminOrAbove = hasRole('admin');
   const isEvaluator = currentMembership?.role === 'evaluator';
   const isMasquerading = !!localStorage.getItem('masquerading');
   const isPlatformAdmin = (!!user?.is_staff || !!user?.is_superuser) && !isMasquerading;
+  const showGamification = isGamificationVisibleForRole(orgSettings, currentMembership?.role);
 
   const [onboardingProgress, setOnboardingProgress] = useState<{ completed: number; total: number } | null>(null);
   useEffect(() => {
@@ -148,7 +151,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
             </svg>
           ),
         },
-        {
+        ...(showGamification ? [{
           name: 'Leaderboard',
           path: '/gamification',
           enabled: true,
@@ -157,7 +160,7 @@ export default function Sidebar({ mobileOpen, onMobileClose }: SidebarProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
             </svg>
           ),
-        },
+        } as NavItem] : []),
       ],
     } as NavSection] : []),
 

@@ -89,6 +89,12 @@ export interface StoreScorecardData {
     section_name: string;
     monthly: Array<{ month: string; avg_percentage: number }>;
   }>;
+  action_items?: {
+    total: number;
+    open: number;
+    resolved: number;
+    avg_resolution_days: number | null;
+  };
 }
 
 export interface RegionComparison {
@@ -180,6 +186,8 @@ export interface ActionItemAnalyticsData {
   open: number;
   in_progress: number;
   resolved: number;
+  pending_review: number;
+  approved: number;
   dismissed: number;
   avg_resolution_days: number | null;
   by_store: Array<{
@@ -226,6 +234,59 @@ export interface DriverAnalyticsData {
     month: string;
     count: number;
   }>;
+}
+
+// --- Resolution Analytics types ---
+
+export interface ResolutionSummary {
+  avg_resolution_days: number | null;
+  median_resolution_days: number | null;
+  total_resolved: number;
+  total_approved: number;
+  avg_approval_days: number | null;
+}
+
+export interface ResolutionByPriority {
+  priority: string;
+  count: number;
+  resolved_count: number;
+  avg_days: number | null;
+  median_days: number | null;
+  sla_met_count: number;
+  sla_met_pct: number;
+}
+
+export interface ResolutionByStore {
+  store_id: string;
+  store_name: string;
+  total: number;
+  resolved: number;
+  avg_resolution_days: number | null;
+  critical_open: number;
+  high_open: number;
+}
+
+export interface ResolutionByRegion {
+  region_id: string;
+  region_name: string;
+  total: number;
+  resolved: number;
+  avg_resolution_days: number | null;
+}
+
+export interface ResolutionMonthlyTrend {
+  month: string;
+  avg_resolution_days: number | null;
+  resolved_count: number;
+  created_count: number;
+}
+
+export interface ResolutionAnalyticsData {
+  summary: ResolutionSummary;
+  by_priority: ResolutionByPriority[];
+  by_store: ResolutionByStore[];
+  by_region: ResolutionByRegion[];
+  monthly_trend: ResolutionMonthlyTrend[];
 }
 
 // ---------- API Functions ----------
@@ -441,6 +502,20 @@ export async function getDriverAnalytics(
 ): Promise<DriverAnalyticsData> {
   const response = await api.get<DriverAnalyticsData>(
     '/walks/analytics/drivers/',
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period },
+    }
+  );
+  return response.data;
+}
+
+export async function getResolutionAnalytics(
+  orgId: string,
+  period: Period = '90d'
+): Promise<ResolutionAnalyticsData> {
+  const response = await api.get<ResolutionAnalyticsData>(
+    '/walks/analytics/resolution/',
     {
       headers: { 'X-Organization': orgId },
       params: { period },

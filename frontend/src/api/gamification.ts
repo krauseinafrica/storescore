@@ -58,6 +58,8 @@ export interface ChallengeData {
   start_date: string;
   end_date: string;
   is_active?: boolean;
+  prizes_text?: string;
+  section_name?: string;
 }
 
 export async function createChallenge(

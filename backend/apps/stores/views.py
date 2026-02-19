@@ -368,6 +368,32 @@ class BenchmarkingView(APIView):
 # ==================== Phase 8: Gamification ====================
 
 
+def _check_gamification_role(request):
+    """
+    Check if the current user's role is allowed to see gamification.
+    Returns True if visible, False otherwise.
+    Empty gamification_visible_roles means all roles can see it.
+    Platform admins always see it.
+    """
+    if getattr(request.user, 'is_staff', False) or getattr(request.user, 'is_superuser', False):
+        return True
+
+    try:
+        settings = OrgSettings.objects.get(organization=request.org)
+    except OrgSettings.DoesNotExist:
+        return True  # No settings = default visible
+
+    visible_roles = settings.gamification_visible_roles
+    if not visible_roles:
+        return True  # Empty list = all roles
+
+    membership = getattr(request, 'membership', None)
+    if not membership:
+        return False
+
+    return membership.role in visible_roles
+
+
 class LeaderboardView(APIView):
     """
     GET /api/v1/stores/leaderboard/
@@ -380,6 +406,12 @@ class LeaderboardView(APIView):
         return [IsAuthenticated(), IsOrgMember(), HasFeature('gamification_advanced')]
 
     def get(self, request):
+        if not _check_gamification_role(request):
+            return Response(
+                {'detail': 'Gamification is not available for your role.'},
+                status=403,
+            )
+
         from apps.walks.analytics import _completed_walks_qs, _parse_period
 
         period = request.query_params.get('period', '30d')
@@ -401,6 +433,8 @@ class LeaderboardView(APIView):
             return self._most_improved_leaderboard(walks, period, limit)
         elif lb_type == 'consistency':
             return self._consistency_leaderboard(walks, limit)
+        elif lb_type == 'streak':
+            return self._streak_leaderboard(walks, limit)
         else:
             return self._avg_score_leaderboard(walks, period, limit)
 
@@ -571,6 +605,90 @@ class LeaderboardView(APIView):
 
         return Response(result)
 
+    def _streak_leaderboard(self, walks, limit):
+        """
+        For each store, count backwards from the current week how many
+        consecutive weeks have at least 1 completed walk.
+        """
+        from django.db.models.functions import ExtractIsoYear, ExtractWeek
+
+        now = timezone.now()
+        current_iso = now.isocalendar()
+        current_year, current_week = current_iso[0], current_iso[1]
+
+        # Get all (store_id, iso_year, iso_week) combos with at least one walk
+        week_data = (
+            walks
+            .annotate(
+                iso_year=ExtractIsoYear('completed_date'),
+                iso_week=ExtractWeek('completed_date'),
+            )
+            .values(
+                'store__id', 'store__name', 'store__store_number',
+                'store__region__name', 'iso_year', 'iso_week',
+            )
+            .annotate(cnt=Count('id'))
+        )
+
+        # Build a set of (year, week) per store
+        store_weeks = {}
+        store_info = {}
+        for entry in week_data:
+            sid = entry['store__id']
+            if sid not in store_weeks:
+                store_weeks[sid] = set()
+                store_info[sid] = {
+                    'store_name': entry['store__name'],
+                    'store_number': entry['store__store_number'] or '',
+                    'region_name': entry['store__region__name'] or '',
+                }
+            store_weeks[sid].add((entry['iso_year'], entry['iso_week']))
+
+        # Calculate streak for each store
+        import datetime as dt
+
+        streaks = []
+        for sid, weeks_set in store_weeks.items():
+            streak = 0
+            year, week = current_year, current_week
+            # Walk backwards week by week
+            for _ in range(104):  # max 2 years look-back
+                if (year, week) in weeks_set:
+                    streak += 1
+                else:
+                    break
+                # Go to previous week
+                d = dt.date.fromisocalendar(year, week, 1) - dt.timedelta(weeks=1)
+                iso = d.isocalendar()
+                year, week = iso[0], iso[1]
+
+            if streak > 0:
+                info = store_info[sid]
+                streaks.append({
+                    'store_id': sid,
+                    'store_name': info['store_name'],
+                    'store_number': info['store_number'],
+                    'region_name': info['region_name'],
+                    'value': streak,
+                })
+
+        streaks.sort(key=lambda x: x['value'], reverse=True)
+
+        result = []
+        for idx, entry in enumerate(streaks[:limit]):
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store_id']),
+                'store_name': entry['store_name'],
+                'store_number': entry['store_number'],
+                'region_name': entry['region_name'],
+                'value': entry['value'],
+                'change': None,
+                'trend': 'stable',
+            })
+
+        return Response(result)
+
 
 class ChallengeViewSet(ModelViewSet):
     """CRUD for challenges. Enterprise-only (gamification_advanced)."""
@@ -579,6 +697,13 @@ class ChallengeViewSet(ModelViewSet):
         if self.action in ('list', 'retrieve', 'standings'):
             return [IsAuthenticated(), IsOrgMember(), HasFeature('gamification_advanced')]
         return [IsAuthenticated(), IsOrgAdmin(), HasFeature('gamification_advanced')]
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        # Role-based gamification visibility (skip for create/update by admins)
+        if self.action in ('list', 'retrieve', 'standings'):
+            if not _check_gamification_role(request):
+                self.permission_denied(request, message='Gamification is not available for your role.')
 
     def get_serializer_class(self):
         if self.action in ('create', 'update', 'partial_update'):
@@ -625,27 +750,93 @@ class ChallengeViewSet(ModelViewSet):
         if accessible_ids is not None:
             walks = walks.filter(store_id__in=accessible_ids)
 
+        # Section-scoped challenges use per-section score averages
+        section_name = challenge.section_name.strip() if challenge.section_name else ''
+
         if challenge.challenge_type == 'score_target':
-            standings = self._score_target_standings(walks, challenge)
+            standings = self._score_target_standings(walks, challenge, section_name)
         elif challenge.challenge_type == 'most_improved':
             standings = self._most_improved_standings(walks, challenge)
         elif challenge.challenge_type == 'walk_count':
             standings = self._walk_count_standings(walks)
         elif challenge.challenge_type == 'highest_score':
-            standings = self._highest_score_standings(walks)
+            standings = self._highest_score_standings(walks, section_name)
         else:
             standings = []
 
         return Response(standings)
 
-    def _score_target_standings(self, walks, challenge):
+    def _section_avg_by_store(self, walks, section_name):
+        """
+        Compute per-store average section score as a percentage.
+        Returns dict: {store_id: {'name': ..., 'avg_pct': float}}.
+        """
+        from apps.walks.models import Score as WalkScore, Section as WalkSection
+        from django.db.models import Sum
+
+        walk_ids = list(walks.values_list('id', flat=True))
+        # Get section IDs matching the name
+        section_ids = list(
+            WalkSection.objects.filter(name__iexact=section_name).values_list('id', flat=True)
+        )
+        if not section_ids:
+            return {}
+
+        # Aggregate scores per walk per store for matching section
+        scores = (
+            WalkScore.objects.filter(
+                walk_id__in=walk_ids,
+                criterion__section_id__in=section_ids,
+            )
+            .values('walk__store__id', 'walk__store__name', 'walk_id')
+            .annotate(
+                total_points=Sum('points'),
+                max_points=Sum('criterion__max_points'),
+            )
+        )
+
+        # Average the walk-level percentages per store
+        store_totals = {}  # {store_id: {'name': str, 'pcts': [float]}}
+        for entry in scores:
+            sid = entry['walk__store__id']
+            if entry['max_points'] and entry['max_points'] > 0:
+                pct = (entry['total_points'] / entry['max_points']) * 100
+            else:
+                continue
+            if sid not in store_totals:
+                store_totals[sid] = {'name': entry['walk__store__name'], 'pcts': []}
+            store_totals[sid]['pcts'].append(pct)
+
+        return {
+            sid: {'name': data['name'], 'avg_pct': sum(data['pcts']) / len(data['pcts'])}
+            for sid, data in store_totals.items()
+            if data['pcts']
+        }
+
+    def _score_target_standings(self, walks, challenge, section_name=''):
+        target = float(challenge.target_value) if challenge.target_value else 0
+
+        if section_name:
+            section_data = self._section_avg_by_store(walks, section_name)
+            sorted_stores = sorted(section_data.items(), key=lambda x: x[1]['avg_pct'], reverse=True)
+            result = []
+            for idx, (store_id, data) in enumerate(sorted_stores):
+                val = round(data['avg_pct'], 1)
+                result.append({
+                    'rank': idx + 1,
+                    'store_id': str(store_id),
+                    'store_name': data['name'],
+                    'value': val,
+                    'meets_target': val >= target,
+                })
+            return result
+
         data = (
             walks
             .values('store__id', 'store__name')
             .annotate(avg_score=Avg('total_score'))
             .order_by('-avg_score')
         )
-        target = float(challenge.target_value) if challenge.target_value else 0
         result = []
         for idx, entry in enumerate(data):
             val = round(float(entry['avg_score']), 1)
@@ -712,7 +903,21 @@ class ChallengeViewSet(ModelViewSet):
             })
         return result
 
-    def _highest_score_standings(self, walks):
+    def _highest_score_standings(self, walks, section_name=''):
+        if section_name:
+            section_data = self._section_avg_by_store(walks, section_name)
+            sorted_stores = sorted(section_data.items(), key=lambda x: x[1]['avg_pct'], reverse=True)
+            result = []
+            for idx, (store_id, data) in enumerate(sorted_stores):
+                result.append({
+                    'rank': idx + 1,
+                    'store_id': str(store_id),
+                    'store_name': data['name'],
+                    'value': round(data['avg_pct'], 1),
+                    'meets_target': True,
+                })
+            return result
+
         from django.db.models import Max
         data = (
             walks
@@ -739,6 +944,11 @@ class AchievementViewSet(ReadOnlyModelViewSet):
 
     def get_permissions(self):
         return [IsAuthenticated(), IsOrgMember(), HasFeature('gamification_basic')]
+
+    def check_permissions(self, request):
+        super().check_permissions(request)
+        if not _check_gamification_role(request):
+            self.permission_denied(request, message='Gamification is not available for your role.')
 
     def _has_advanced(self, request):
         """Check if the current plan has gamification_advanced."""

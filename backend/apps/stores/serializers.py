@@ -114,7 +114,7 @@ class OrgSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subscription_tier', 'ai_photo_analysis',
             'allow_benchmarking', 'benchmarking_period_days',
-            'gamification_enabled',
+            'gamification_enabled', 'gamification_visible_roles',
             'action_item_deadline_critical', 'action_item_deadline_high',
             'action_item_deadline_medium', 'action_item_deadline_low',
             'created_at', 'updated_at',
@@ -209,6 +209,7 @@ class ChallengeListSerializer(serializers.ModelSerializer):
             'region', 'region_name', 'target_value',
             'start_date', 'end_date', 'is_active',
             'is_ongoing', 'days_remaining',
+            'prizes_text', 'section_name',
             'created_by', 'created_by_name',
             'created_at',
         ]
@@ -233,6 +234,7 @@ class ChallengeCreateSerializer(serializers.ModelSerializer):
         fields = [
             'name', 'description', 'challenge_type', 'scope',
             'region', 'target_value', 'start_date', 'end_date', 'is_active',
+            'prizes_text', 'section_name',
         ]
 
     def validate(self, attrs):

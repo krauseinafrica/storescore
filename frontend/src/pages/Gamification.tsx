@@ -3,7 +3,7 @@ import { useAuth } from '../hooks/useAuth';
 import { useSubscription } from '../hooks/useSubscription';
 import FeatureGate from '../components/FeatureGate';
 import { getOrgId } from '../utils/org';
-import { getRegions } from '../api/walks';
+import { getRegions, getTemplates } from '../api/walks';
 import {
   getLeaderboard,
   getChallenges,
@@ -21,6 +21,7 @@ import type {
   LeaderboardEntry,
   Region,
   AchievementTier,
+  ScoringTemplate,
 } from '../types';
 import type { ChallengeData } from '../api/gamification';
 
@@ -52,6 +53,7 @@ const LEADERBOARD_TYPES = [
   { value: 'walk_count', label: 'Most Walks' },
   { value: 'most_improved', label: 'Most Improved' },
   { value: 'consistency', label: 'Most Consistent' },
+  { value: 'streak', label: 'Longest Streak' },
 ];
 
 const PERIODS = [
@@ -65,10 +67,12 @@ const PERIODS = [
 
 function ChallengeFormModal({
   regions,
+  sectionNames,
   onSave,
   onClose,
 }: {
   regions: Region[];
+  sectionNames: string[];
   onSave: (data: ChallengeData) => Promise<void>;
   onClose: () => void;
 }) {
@@ -82,6 +86,8 @@ function ChallengeFormModal({
     start_date: new Date().toISOString().split('T')[0],
     end_date: '',
     is_active: true,
+    prizes_text: '',
+    section_name: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -215,6 +221,34 @@ function ChallengeFormModal({
             </div>
           )}
 
+          {sectionNames.length > 0 && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Section (optional)</label>
+              <select
+                value={form.section_name || ''}
+                onChange={(e) => setForm({ ...form, section_name: e.target.value })}
+                className="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500"
+              >
+                <option value="">All sections (overall score)</option>
+                {sectionNames.map((s) => (
+                  <option key={s} value={s}>{s}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-gray-400 mt-1">Scope standings to a specific template section.</p>
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Prizes (optional)</label>
+            <textarea
+              value={form.prizes_text || ''}
+              onChange={(e) => setForm({ ...form, prizes_text: e.target.value })}
+              className="w-full rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500"
+              rows={2}
+              placeholder="e.g. Winner gets pizza party, 2nd place gets gift cards..."
+            />
+          </div>
+
           <div className="flex justify-end gap-2 pt-2">
             <button type="button" onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200">Cancel</button>
             <button type="submit" disabled={saving} className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50">
@@ -259,6 +293,9 @@ export default function Gamification() {
   const [achievements, setAchievements] = useState<Achievement[]>([]);
   const [awardedAchievements, setAwardedAchievements] = useState<AwardedAchievement[]>([]);
   const [tierFilter, setTierFilter] = useState<AchievementTier | 'all'>('all');
+
+  // Section names for challenge creation
+  const [sectionNames, setSectionNames] = useState<string[]>([]);
 
   const loadLeaderboard = useCallback(async () => {
     if (!orgId) return;
@@ -309,12 +346,19 @@ export default function Gamification() {
       getChallenges(orgId).catch(() => []),
       getAchievements(orgId).catch(() => []),
       getAwardedAchievements(orgId).catch(() => []),
-    ]).then(([regionData, lbData, challengeData, achData, awardData]) => {
+      getTemplates(orgId).catch(() => [] as ScoringTemplate[]),
+    ]).then(([regionData, lbData, challengeData, achData, awardData, templateData]) => {
       setRegions(regionData);
       setLeaderboard(lbData);
       setChallenges(challengeData);
       setAchievements(achData);
       setAwardedAchievements(awardData);
+      // Extract unique section names from templates
+      const names = new Set<string>();
+      templateData.forEach((t: ScoringTemplate) => {
+        (t.sections || []).forEach((s) => names.add(s.name));
+      });
+      setSectionNames(Array.from(names).sort());
     }).finally(() => setLoading(false));
   }, [orgId]);
 
@@ -486,10 +530,10 @@ export default function Gamification() {
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Store</th>
                     <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Region</th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                      {lbType === 'walk_count' ? 'Walks' : lbType === 'most_improved' ? 'Change' : lbType === 'consistency' ? 'Avg Score' : 'Avg Score'}
+                      {lbType === 'walk_count' ? 'Walks' : lbType === 'most_improved' ? 'Change' : lbType === 'consistency' ? 'Avg Score' : lbType === 'streak' ? 'Weeks' : 'Avg Score'}
                     </th>
                     <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">
-                      {lbType === 'consistency' ? 'Std Dev' : 'Trend'}
+                      {lbType === 'consistency' ? 'Std Dev' : lbType === 'streak' ? '' : 'Trend'}
                     </th>
                   </tr>
                 </thead>
@@ -503,10 +547,12 @@ export default function Gamification() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-500">{entry.region_name}</td>
                       <td className="px-4 py-3 text-sm text-right font-semibold">
-                        {lbType === 'walk_count' ? entry.value : lbType === 'most_improved' ? `${entry.value > 0 ? '+' : ''}${entry.value}%` : `${entry.value}%`}
+                        {lbType === 'walk_count' ? entry.value : lbType === 'streak' ? `${entry.value} wk${entry.value !== 1 ? 's' : ''}` : lbType === 'most_improved' ? `${entry.value > 0 ? '+' : ''}${entry.value}%` : `${entry.value}%`}
                       </td>
                       <td className="px-4 py-3 text-sm text-right">
-                        {lbType === 'consistency' ? (
+                        {lbType === 'streak' ? (
+                          <span />
+                        ) : lbType === 'consistency' ? (
                           <span className="text-gray-500">{entry.change}</span>
                         ) : (
                           <span className="flex items-center justify-end gap-1">
@@ -570,7 +616,16 @@ export default function Gamification() {
                           {c.days_remaining} days remaining
                           {c.target_value && ` \u00b7 Target: ${c.target_value}`}
                           {c.region_name && ` \u00b7 Region: ${c.region_name}`}
+                          {c.section_name && ` \u00b7 Section: ${c.section_name}`}
                         </p>
+                        {c.prizes_text && (
+                          <div className="mt-1.5 flex items-start gap-1.5">
+                            <svg className="w-3.5 h-3.5 text-amber-500 mt-0.5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M5 5a3 3 0 015-2.236A3 3 0 0114.83 6H16a2 2 0 110 4h-5V9a1 1 0 10-2 0v1H4a2 2 0 110-4h1.17C5.06 5.687 5 5.35 5 5zm4 1V5a1 1 0 10-1 1h1zm2 0a1 1 0 10-1-1v1h1zm-6 7v2a2 2 0 002 2h6a2 2 0 002-2v-2H5z" clipRule="evenodd" />
+                            </svg>
+                            <p className="text-[11px] text-amber-700 font-medium">{c.prizes_text}</p>
+                          </div>
+                        )}
                       </div>
                       {isAdmin && (
                         <button
@@ -777,6 +832,7 @@ export default function Gamification() {
       {showChallengeForm && (
         <ChallengeFormModal
           regions={regions}
+          sectionNames={sectionNames}
           onSave={handleCreateChallenge}
           onClose={() => setShowChallengeForm(false)}
         />

@@ -6,27 +6,29 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+from decouple import Csv, config
+
 import sentry_sdk
 
-sentry_sdk.init(
-    dsn="https://7dc01fed0147d8c7d0d8ef23113a7300@o4510908563521536.ingest.us.sentry.io/4510908602318848",
-    send_default_pii=True,
-    enable_logs=True,
-    traces_sample_rate=1.0,
-    profile_session_sample_rate=1.0,
-    profile_lifecycle="trace",
-)
-
-from decouple import Csv, config
+_sentry_dsn = config('SENTRY_DSN', default='')
+if _sentry_dsn:
+    sentry_sdk.init(
+        dsn=_sentry_dsn,
+        send_default_pii=False,
+        enable_logs=True,
+        traces_sample_rate=config('SENTRY_TRACES_RATE', default=0.1, cast=float),
+        profile_session_sample_rate=config('SENTRY_PROFILE_RATE', default=0.1, cast=float),
+        profile_lifecycle="trace",
+    )
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
-SECRET_KEY = config('DJANGO_SECRET_KEY', default='change-me-in-production')
+SECRET_KEY = config('DJANGO_SECRET_KEY', default='change-me-in-dev-only')
 
-DEBUG = config('DJANGO_DEBUG', default=True, cast=bool)
+DEBUG = config('DJANGO_DEBUG', default=False, cast=bool)
 
-ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='*', cast=Csv())
+ALLOWED_HOSTS = config('DJANGO_ALLOWED_HOSTS', default='localhost,127.0.0.1', cast=Csv())
 
 # Application definition
 
@@ -42,6 +44,7 @@ INSTALLED_APPS = [
     'corsheaders',
     'django_celery_beat',
     'storages',
+    'rest_framework_simplejwt.token_blacklist',
     # Local apps
     'apps.core',
     'apps.accounts',
@@ -131,6 +134,18 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
     ),
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': '30/minute',
+        'user': '120/minute',
+        'login': '5/minute',
+        'password_reset': '3/minute',
+        'signup': '5/minute',
+        'lead_capture': '10/minute',
+    },
     'DEFAULT_PAGINATION_CLASS': 'apps.core.pagination.StandardResultsSetPagination',
     'PAGE_SIZE': 25,
 }
@@ -140,7 +155,7 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,
+    'BLACKLIST_AFTER_ROTATION': True,
     'USER_ID_FIELD': 'id',
     'USER_ID_CLAIM': 'user_id',
     'AUTH_HEADER_TYPES': ('Bearer',),

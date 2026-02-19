@@ -14,6 +14,8 @@ from rest_framework.permissions import AllowAny, IsAdminUser, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from apps.core.throttles import LeadCaptureRateThrottle
+
 from apps.stores.models import Region, Store
 from apps.stores.serializers import RegionSerializer, StoreSerializer
 from apps.walks.models import Walk
@@ -633,6 +635,7 @@ class LeadDetailView(APIView):
 class ChatLeadView(APIView):
     """POST /api/v1/auth/chat-lead/ — capture leads from the guided chat widget."""
     permission_classes = [AllowAny]
+    throttle_classes = [LeadCaptureRateThrottle]
 
     def post(self, request):
         import json
@@ -788,6 +791,7 @@ class ChatLeadView(APIView):
 class EmailCaptureView(APIView):
     """POST /api/v1/auth/email-capture/ — lightweight lead capture (email + optional name)."""
     permission_classes = [AllowAny]
+    throttle_classes = [LeadCaptureRateThrottle]
 
     def post(self, request):
         from .leads import Lead

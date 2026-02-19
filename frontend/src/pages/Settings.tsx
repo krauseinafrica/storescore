@@ -717,6 +717,65 @@ export default function Settings() {
                   />
                 </button>
               </div>
+
+              {settings?.gamification_enabled && (
+                <div className="mt-4 pt-4 border-t border-gray-100">
+                  <label className="block text-xs font-medium text-gray-600 mb-2">
+                    Visible to Roles
+                  </label>
+                  <p className="text-[10px] text-gray-400 mb-2">
+                    Select which roles can see leaderboards, challenges, and achievements. Leave empty for all roles.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {([
+                      { value: 'owner', label: 'Owner' },
+                      { value: 'admin', label: 'Admin' },
+                      { value: 'regional_manager', label: 'Regional Mgr' },
+                      { value: 'store_manager', label: 'Store Mgr' },
+                      { value: 'manager', label: 'Manager' },
+                      { value: 'evaluator', label: 'Evaluator' },
+                      { value: 'member', label: 'Member' },
+                    ]).map((role) => {
+                      const currentRoles = settings?.gamification_visible_roles || [];
+                      const isSelected = currentRoles.includes(role.value);
+                      return (
+                        <button
+                          key={role.value}
+                          type="button"
+                          disabled={settingsSaving}
+                          onClick={async () => {
+                            if (!orgId) return;
+                            const newRoles = isSelected
+                              ? currentRoles.filter((r: string) => r !== role.value)
+                              : [...currentRoles, role.value];
+                            setSettingsSaving(true);
+                            try {
+                              const updated = await updateOrgSettings(orgId, {
+                                gamification_visible_roles: newRoles,
+                              });
+                              setSettings(updated);
+                            } catch {
+                              // ignore
+                            } finally {
+                              setSettingsSaving(false);
+                            }
+                          }}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                            isSelected
+                              ? 'bg-primary-600 text-white'
+                              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          }`}
+                        >
+                          {role.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {(settings?.gamification_visible_roles?.length ?? 0) === 0 && (
+                    <p className="text-[10px] text-gray-400 mt-2 italic">All roles can see gamification (default).</p>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <FeatureGate feature="gamification_basic" requiredPlan="Pro">
