@@ -8,8 +8,8 @@ from apps.core.storage import user_avatar_path
 
 from .managers import CustomUserManager
 
-# Import Lead model so Django discovers it
-from .leads import Lead  # noqa: F401
+# Import Lead and DripEmail models so Django discovers them
+from .leads import DripEmail, Lead  # noqa: F401
 
 
 class User(AbstractBaseUser, PermissionsMixin):
@@ -170,3 +170,103 @@ class StoreAssignment(TimestampedModel):
 
     def __str__(self):
         return f'{self.membership.user.email} → {self.store.name}'
+
+
+class SupportTicket(TimestampedModel):
+    """A support ticket submitted by an organization member."""
+
+    class Status(models.TextChoices):
+        OPEN = 'open', 'Open'
+        IN_PROGRESS = 'in_progress', 'In Progress'
+        RESOLVED = 'resolved', 'Resolved'
+        CLOSED = 'closed', 'Closed'
+
+    class Priority(models.TextChoices):
+        LOW = 'low', 'Low'
+        MEDIUM = 'medium', 'Medium'
+        HIGH = 'high', 'High'
+
+    class Category(models.TextChoices):
+        BUG = 'bug', 'Bug'
+        UI_FEEDBACK = 'ui_feedback', 'UI Feedback'
+        ENHANCEMENT = 'enhancement', 'Enhancement Request'
+        QUESTION = 'question', 'Question'
+        OTHER = 'other', 'Other'
+
+    class Source(models.TextChoices):
+        MANUAL = 'manual', 'Manual'
+        SENTRY = 'sentry', 'Sentry'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        Organization,
+        on_delete=models.CASCADE,
+        related_name='support_tickets',
+        null=True,
+        blank=True,
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name='support_tickets',
+        null=True,
+        blank=True,
+    )
+    source = models.CharField(
+        max_length=20,
+        choices=Source.choices,
+        default=Source.MANUAL,
+    )
+    external_id = models.CharField(max_length=100, blank=True, default='')
+    subject = models.CharField(max_length=255)
+    description = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.OPEN,
+    )
+    priority = models.CharField(
+        max_length=20,
+        choices=Priority.choices,
+        default=Priority.MEDIUM,
+    )
+    category = models.CharField(
+        max_length=20,
+        choices=Category.choices,
+        default=Category.OTHER,
+    )
+    resolution_notes = models.TextField(blank=True, default='')
+
+    class Meta:
+        db_table = 'accounts_supportticket'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'[{self.status}] {self.subject}'
+
+
+class TicketMessage(models.Model):
+    """A message in a support ticket thread."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    ticket = models.ForeignKey(
+        SupportTicket,
+        on_delete=models.CASCADE,
+        related_name='messages',
+    )
+    user = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ticket_messages',
+    )
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'accounts_ticketmessage'
+        ordering = ['created_at']
+
+    def __str__(self):
+        sender = self.user.email if self.user else 'System'
+        return f'{sender}: {self.message[:50]}'

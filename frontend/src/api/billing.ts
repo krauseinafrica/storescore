@@ -32,6 +32,9 @@ export interface Subscription {
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   discount_percent: number;
+  promo_discount_name: string;
+  promo_discount_percent: number;
+  effective_discount_percent: number;
   created_at: string;
   updated_at: string;
 }

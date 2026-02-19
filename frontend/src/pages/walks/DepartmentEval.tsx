@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../../hooks/useAuth';
+import { getOrgId } from '../../utils/org';
 import {
   getWalk,
   uploadWalkPhoto,
@@ -41,8 +41,7 @@ interface CriterionState {
 export default function DepartmentEval() {
   const { walkId } = useParams<{ walkId: string }>();
   const navigate = useNavigate();
-  const { currentMembership } = useAuth();
-  const orgId = currentMembership?.organization.id || '';
+  const orgId = getOrgId();
 
   const [walk, setWalk] = useState<Walk | null>(null);
   const [loading, setLoading] = useState(true);
@@ -181,7 +180,8 @@ export default function DepartmentEval() {
         file,
         criterion.name,
         section.name,
-        ''
+        '',
+        criterion.id
       );
 
       const suggestedScore = analysis.suggested_score || 3;

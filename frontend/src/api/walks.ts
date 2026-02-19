@@ -6,6 +6,7 @@ import type {
   CalendarToken,
   CorrectiveAction,
   CorrectiveActionSummary,
+  CriterionReferenceImage,
   Department,
   DepartmentType,
   Driver,
@@ -176,6 +177,15 @@ export async function duplicateTemplate(
     { headers: { 'X-Organization': orgId } }
   );
   return response.data;
+}
+
+export async function deleteTemplate(
+  orgId: string,
+  templateId: string
+): Promise<void> {
+  await api.delete(`/walks/templates/${templateId}/`, {
+    headers: { 'X-Organization': orgId },
+  });
 }
 
 // ---------- Walks ----------
@@ -377,13 +387,15 @@ export async function analyzePhoto(
   file: File,
   criterionName?: string,
   sectionName?: string,
-  caption?: string
+  caption?: string,
+  criterionId?: string
 ): Promise<PhotoAnalysisResult> {
   const formData = new FormData();
   formData.append('image', file);
   if (criterionName) formData.append('criterion_name', criterionName);
   if (sectionName) formData.append('section_name', sectionName);
   if (caption) formData.append('caption', caption);
+  if (criterionId) formData.append('criterion_id', criterionId);
 
   const response = await api.post<PhotoAnalysisResult>(
     '/walks/analyze-photo/',
@@ -398,11 +410,77 @@ export async function analyzePhoto(
   return response.data;
 }
 
+// ---------- Criterion Reference Images ----------
+
+export async function listReferenceImages(
+  orgId: string,
+  criterionId: string
+): Promise<CriterionReferenceImage[]> {
+  const response = await api.get<CriterionReferenceImage[]>(
+    `/walks/criteria/${criterionId}/reference-images/`,
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function uploadReferenceImage(
+  orgId: string,
+  criterionId: string,
+  file: File,
+  description: string
+): Promise<CriterionReferenceImage> {
+  const formData = new FormData();
+  formData.append('image', file);
+  formData.append('description', description);
+
+  const response = await api.post<CriterionReferenceImage>(
+    `/walks/criteria/${criterionId}/reference-images/`,
+    formData,
+    {
+      headers: {
+        'X-Organization': orgId,
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function updateReferenceImageDescription(
+  orgId: string,
+  criterionId: string,
+  imageId: string,
+  description: string
+): Promise<CriterionReferenceImage> {
+  const response = await api.patch<CriterionReferenceImage>(
+    `/walks/criteria/${criterionId}/reference-images/${imageId}/`,
+    { description },
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function deleteReferenceImage(
+  orgId: string,
+  criterionId: string,
+  imageId: string
+): Promise<void> {
+  await api.delete(
+    `/walks/criteria/${criterionId}/reference-images/${imageId}/`,
+    { headers: { 'X-Organization': orgId } }
+  );
+}
+
 export interface OrgSettingsData {
   id: string;
   ai_photo_analysis: boolean;
   allow_benchmarking: boolean;
   benchmarking_period_days: number;
+  gamification_enabled: boolean;
+  action_item_deadline_critical: number;
+  action_item_deadline_high: number;
+  action_item_deadline_medium: number;
+  action_item_deadline_low: number;
 }
 
 export interface OrgProfileData {
@@ -668,6 +746,16 @@ export async function updateActionItem(
   return response.data;
 }
 
+export async function createActionItem(
+  orgId: string,
+  data: { store: string; description: string; priority?: string; assigned_to?: string; due_date?: string }
+): Promise<ActionItem> {
+  const response = await api.post<ActionItem>('/walks/action-items/', data, {
+    headers: { 'X-Organization': orgId },
+  });
+  return response.data;
+}
+
 export async function submitActionItemResponse(
   orgId: string,
   actionItemId: string,
@@ -708,6 +796,54 @@ export async function verifyActionItemPhoto(
   return response.data;
 }
 
+export async function resolveActionItemWithPhoto(
+  orgId: string,
+  actionItemId: string,
+  file: File,
+  notes?: string
+): Promise<{ status: string; photo_id: string; resolved_at: string }> {
+  const formData = new FormData();
+  formData.append('image', file);
+  if (notes) formData.append('notes', notes);
+  const response = await api.post(
+    `/walks/action-items/${actionItemId}/resolve-with-photo/`,
+    formData,
+    {
+      headers: {
+        'X-Organization': orgId,
+        'Content-Type': 'multipart/form-data',
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function signOffActionItem(
+  orgId: string,
+  actionItemId: string,
+  notes?: string
+): Promise<{ status: string; reviewed_at: string }> {
+  const response = await api.post(
+    `/walks/action-items/${actionItemId}/sign-off/`,
+    { notes: notes || '' },
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function pushBackActionItem(
+  orgId: string,
+  actionItemId: string,
+  notes: string
+): Promise<{ status: string; detail: string }> {
+  const response = await api.post(
+    `/walks/action-items/${actionItemId}/push-back/`,
+    { notes },
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
 // ==================== Feature 3: Self-Assessments ====================
 
 export async function getAssessmentTemplates(
@@ -742,6 +878,28 @@ export async function createAssessmentTemplate(
     { headers: { 'X-Organization': orgId } }
   );
   return response.data;
+}
+
+export async function updateAssessmentTemplate(
+  orgId: string,
+  id: string,
+  data: { name?: string; description?: string; is_active?: boolean; prompts?: Array<{ id?: string; name: string; description?: string; ai_evaluation_prompt?: string; order: number; rating_type: string }> }
+): Promise<SelfAssessmentTemplate> {
+  const response = await api.put<SelfAssessmentTemplate>(
+    `/walks/assessment-templates/${id}/`,
+    data,
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function deleteAssessmentTemplate(
+  orgId: string,
+  id: string
+): Promise<void> {
+  await api.delete(`/walks/assessment-templates/${id}/`, {
+    headers: { 'X-Organization': orgId },
+  });
 }
 
 export async function getAssessments(
@@ -790,15 +948,24 @@ export async function submitAssessment(
 
 export async function reviewAssessment(
   orgId: string,
-  id: string,
-  reviewerNotes: string
-): Promise<SelfAssessment> {
-  const response = await api.post<SelfAssessment>(
-    `/walks/assessments/${id}/review/`,
-    { reviewer_notes: reviewerNotes },
+  assessmentId: string,
+  submissions: Array<{ id: string; reviewer_rating?: string; reviewer_notes?: string }>
+): Promise<{ updated: string[]; assessment_status: string }> {
+  const response = await api.post(
+    `/walks/assessments/${assessmentId}/review/`,
+    { submissions },
     { headers: { 'X-Organization': orgId } }
   );
   return response.data;
+}
+
+export async function deleteAssessment(
+  orgId: string,
+  id: string
+): Promise<void> {
+  await api.delete(`/walks/assessments/${id}/`, {
+    headers: { 'X-Organization': orgId },
+  });
 }
 
 export async function uploadAssessmentSubmission(
@@ -823,6 +990,33 @@ export async function uploadAssessmentSubmission(
         'Content-Type': 'multipart/form-data',
       },
     }
+  );
+  return response.data;
+}
+
+export async function updateAssessmentSubmission(
+  orgId: string,
+  assessmentId: string,
+  submissionId: string,
+  data: { self_rating?: string; caption?: string }
+): Promise<AssessmentSubmission> {
+  const response = await api.patch<AssessmentSubmission>(
+    `/walks/assessments/${assessmentId}/submissions/`,
+    { submission_id: submissionId, ...data },
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function createAssessmentActionItems(
+  orgId: string,
+  assessmentId: string,
+  items: Array<{ description: string; priority: string }>
+): Promise<{ created: Array<{ id: string; description: string; priority: string; due_date: string; assigned_to_name: string | null }>; count: number }> {
+  const response = await api.post(
+    `/walks/assessments/${assessmentId}/create-action-items/`,
+    { items },
+    { headers: { 'X-Organization': orgId } }
   );
   return response.data;
 }
@@ -861,6 +1055,16 @@ export async function updateCorrectiveAction(
     data,
     { headers: { 'X-Organization': orgId } }
   );
+  return response.data;
+}
+
+export async function createCorrectiveAction(
+  orgId: string,
+  data: { store: string; notes: string; escalation_level?: string; responsible_user?: string }
+): Promise<CorrectiveAction> {
+  const response = await api.post<CorrectiveAction>('/walks/corrective-actions/', data, {
+    headers: { 'X-Organization': orgId },
+  });
   return response.data;
 }
 

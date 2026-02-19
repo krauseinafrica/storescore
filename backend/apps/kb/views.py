@@ -160,3 +160,43 @@ class OnboardingProgressView(APIView):
             'completed': completed,
             'percentage': percentage,
         })
+
+
+class QuickStartProgressView(APIView):
+    """Return live engagement counts for the Quick Start checklist."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.core.permissions import get_org_from_request
+        org = get_org_from_request(request)
+        if not org:
+            return Response({
+                'stores': 0, 'templates': 0, 'team_members': 0,
+                'walks': 0, 'ai_summaries': 0,
+            })
+
+        from apps.accounts.models import Membership
+        from apps.stores.models import Goal, Store
+        from apps.walks.models import Department, ScoringTemplate, Walk
+
+        stores = Store.objects.filter(organization=org)
+        departments = Department.objects.filter(organization=org)
+
+        # Count stores that have at least one department linked
+        stores_with_depts = stores.filter(departments__isnull=False).distinct().count()
+
+        # Check if org has set a score goal (meaningful settings action)
+        has_goals = Goal.objects.filter(organization=org).exists()
+
+        return Response({
+            'stores': stores.count(),
+            'templates': ScoringTemplate.objects.filter(organization=org).count(),
+            'team_members': Membership.objects.filter(organization=org).count(),
+            'walks': Walk.objects.filter(organization=org, status='completed').count(),
+            'ai_summaries': Walk.objects.filter(
+                organization=org, ai_summary__isnull=False,
+            ).exclude(ai_summary='').count(),
+            'departments': departments.count(),
+            'departments_applied': stores_with_depts,
+            'org_configured': has_goals,
+        })

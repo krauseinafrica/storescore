@@ -196,67 +196,149 @@ export default function Billing() {
               )}
             </div>
 
-            {subscription && (
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mt-6 pt-4 border-t border-gray-100">
-                <div>
-                  <p className="text-xs text-gray-400">Billing</p>
-                  <p className="text-sm font-medium text-gray-900 capitalize">
-                    {subscription.billing_interval}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">Stores</p>
-                  <p className="text-sm font-medium text-gray-900">{subscription.store_count}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-gray-400">Discount</p>
-                  <p className="text-sm font-medium text-gray-900">
-                    {subscription.discount_percent > 0 ? `${subscription.discount_percent}% off` : 'None'}
-                  </p>
-                </div>
-                {subscription.current_period_end && (
-                  <div>
-                    <p className="text-xs text-gray-400">
-                      {subscription.cancel_at_period_end ? 'Cancels on' : 'Renews on'}
-                    </p>
-                    <p className="text-sm font-medium text-gray-900">
-                      {formatDate(subscription.current_period_end)}
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
+            {subscription && (() => {
+              const currentPlan = plans.find((p) => p.slug === subscription.plan_slug);
+              const perStore = currentPlan
+                ? parseFloat(subscription.billing_interval === 'annual' ? currentPlan.price_per_store_annual : currentPlan.price_per_store_monthly)
+                : 0;
+              const subtotal = perStore * subscription.store_count;
+              const effectiveDiscount = subscription.effective_discount_percent ?? subscription.discount_percent;
+              const hasPromo = subscription.promo_discount_percent > 0;
+              const discountLabel = hasPromo && subscription.promo_discount_name
+                ? `${subscription.promo_discount_name} (${effectiveDiscount}%)`
+                : `Volume discount (${effectiveDiscount}%)`;
+              const discountAmount = subtotal * (effectiveDiscount / 100);
+              const estimatedTotal = subtotal - discountAmount;
+              const isTrial = subscription.status === 'trialing' && subscription.trial_end;
+              const daysLeft = isTrial
+                ? Math.ceil((new Date(subscription.trial_end!).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
+                : 0;
 
-            {/* Trial info */}
-            {subscription?.status === 'trialing' && subscription.trial_end && (
-              <div className="mt-4 bg-blue-50 rounded-lg p-4">
-                <div className="flex items-start gap-3">
-                  <svg className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <p className="text-sm font-semibold text-blue-900">
-                      Free trial ends {formatDate(subscription.trial_end)}
-                    </p>
-                    <p className="text-sm text-blue-700 mt-1">
-                      You have full access to all <strong>{subscription.plan_name}</strong> features during your trial.
-                      {(() => {
-                        const daysLeft = Math.ceil(
-                          (new Date(subscription.trial_end).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-                        );
-                        return daysLeft > 0 ? ` ${daysLeft} days remaining.` : ' Your trial has ended.';
-                      })()}
-                    </p>
-                    <p className="text-xs text-blue-600 mt-2">
-                      When your trial ends, you'll need to choose a subscription plan to continue.
-                      Without an active subscription, your account becomes read-only — you can still
-                      view your existing data, but you won't be able to create new walks, add stores,
-                      or make changes. After 90 days, inactive accounts are archived.
-                    </p>
+              return (
+                <>
+                  {/* Trial banner — the single source of truth */}
+                  {isTrial && (
+                    <div className="mt-6 bg-blue-50 rounded-lg p-5">
+                      <div className="flex items-start gap-3">
+                        <svg className="w-5 h-5 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <div className="flex-1">
+                          <p className="text-sm font-semibold text-blue-900">
+                            Your free trial ends {formatDate(subscription.trial_end!)}
+                            <span className="font-normal text-blue-700"> — {daysLeft > 0 ? `${daysLeft} days remaining` : 'ending soon'}</span>
+                          </p>
+
+                          {currentPlan && (
+                            <div className="mt-3 bg-white/70 rounded-lg p-4">
+                              <p className="text-sm font-semibold text-gray-900 mb-2">
+                                On {formatDate(subscription.trial_end!)}, your {subscription.plan_name} plan will cost:
+                              </p>
+                              <div className="space-y-1 text-sm max-w-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-600">
+                                    {subscription.store_count} stores x {formatCurrency(perStore)}/store
+                                  </span>
+                                  <span className="text-gray-800">{formatCurrency(subtotal)}/mo</span>
+                                </div>
+                                {effectiveDiscount > 0 && (
+                                  <div className="flex justify-between text-green-700">
+                                    <span>{discountLabel}</span>
+                                    <span>-{formatCurrency(discountAmount)}</span>
+                                  </div>
+                                )}
+                                <div className="flex justify-between pt-2 mt-1 border-t border-blue-200 font-bold text-base">
+                                  <span className="text-gray-900">You'll pay</span>
+                                  <span className="text-gray-900">{formatCurrency(estimatedTotal)}/mo</span>
+                                </div>
+                                {subscription.billing_interval === 'annual' && (
+                                  <div className="flex justify-between text-xs text-gray-500 pt-0.5">
+                                    <span>Billed annually</span>
+                                    <span>{formatCurrency(estimatedTotal * 12)}/yr</span>
+                                  </div>
+                                )}
+                              </div>
+                              <p className="text-xs text-gray-500 mt-2">
+                                Based on your current {subscription.store_count} active stores. Add or remove stores and this updates automatically.
+                              </p>
+                            </div>
+                          )}
+
+                          <p className="text-xs text-blue-600 mt-3">
+                            Without an active subscription after your trial, your account becomes read-only.
+                            You can still view data, but won't be able to create walks or make changes.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Plan details grid */}
+                  <div className={`grid grid-cols-2 sm:grid-cols-4 gap-4 ${isTrial ? 'mt-4 pt-4 border-t border-gray-100' : 'mt-6 pt-4 border-t border-gray-100'}`}>
+                    <div>
+                      <p className="text-xs text-gray-400">Billing</p>
+                      <p className="text-sm font-medium text-gray-900 capitalize">
+                        {subscription.billing_interval}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400">Stores</p>
+                      <p className="text-sm font-medium text-gray-900">{subscription.store_count}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-gray-400">Discount</p>
+                      <p className="text-sm font-medium text-gray-900">
+                        {effectiveDiscount > 0
+                          ? hasPromo && subscription.promo_discount_name
+                            ? `${subscription.promo_discount_name} (${effectiveDiscount}%)`
+                            : `${effectiveDiscount}% off`
+                          : 'None'}
+                      </p>
+                    </div>
+                    {subscription.current_period_end && !isTrial && (
+                      <div>
+                        <p className="text-xs text-gray-400">
+                          {subscription.cancel_at_period_end ? 'Cancels on' : 'Renews on'}
+                        </p>
+                        <p className="text-sm font-medium text-gray-900">
+                          {formatDate(subscription.current_period_end)}
+                        </p>
+                      </div>
+                    )}
                   </div>
-                </div>
-              </div>
-            )}
+
+                  {/* Cost breakdown for active (non-trial) subscriptions */}
+                  {!isTrial && currentPlan && (
+                    <div className="mt-4 pt-4 border-t border-gray-100">
+                      <div className="space-y-1.5 text-sm max-w-xs">
+                        <div className="flex justify-between">
+                          <span className="text-gray-500">
+                            {subscription.store_count} stores x {formatCurrency(perStore)}/store
+                          </span>
+                          <span className="text-gray-700">{formatCurrency(subtotal)}/mo</span>
+                        </div>
+                        {effectiveDiscount > 0 && (
+                          <div className="flex justify-between text-green-600">
+                            <span>{discountLabel}</span>
+                            <span>-{formatCurrency(discountAmount)}/mo</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between pt-1.5 border-t border-gray-100 font-semibold">
+                          <span className="text-gray-900">Total</span>
+                          <span className="text-gray-900">{formatCurrency(estimatedTotal)}/mo</span>
+                        </div>
+                        {subscription.billing_interval === 'annual' && (
+                          <div className="flex justify-between text-xs text-gray-400">
+                            <span>Billed annually</span>
+                            <span>{formatCurrency(estimatedTotal * 12)}/yr</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
 
             {/* Past due warning */}
             {subscription?.status === 'past_due' && (
@@ -302,7 +384,8 @@ export default function Billing() {
             )}
           </div>
 
-          {/* Volume discounts info */}
+          {/* Volume discounts info — hidden when promo is active */}
+          {!(subscription?.promo_discount_percent && subscription.promo_discount_percent > 0) && (
           <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-5 shadow-sm">
             <h3 className="text-sm font-semibold text-gray-900 mb-3">Volume Discounts</h3>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-center">
@@ -328,6 +411,7 @@ export default function Billing() {
               ))}
             </div>
           </div>
+          )}
         </div>
       )}
 
@@ -388,6 +472,7 @@ export default function Billing() {
                   { label: 'Unlimited walks & templates', included: true },
                   { label: 'AI-powered walk summaries', included: true },
                   { label: 'Action items & follow-ups', included: true },
+                  { label: 'Achievement badges & milestones', included: true },
                   { label: 'Evaluation scheduling', included: true },
                   { label: 'Self-assessments', included: true },
                   { label: 'Goals & KPI tracking', included: true },
@@ -400,6 +485,7 @@ export default function Billing() {
                 enterprise: [
                   { label: 'Unlimited users', included: true },
                   { label: 'Everything in Pro, plus:', included: true },
+                  { label: 'Leaderboards, challenges & advanced badges', included: true },
                   { label: 'AI photo analysis & scoring', included: true },
                   { label: 'External evaluator access', included: true },
                   { label: 'POS & inventory integrations', included: true },
@@ -444,6 +530,20 @@ export default function Billing() {
                     </span>
                     <span className="text-sm text-gray-500">/store/mo</span>
                   </div>
+                  {subscription && subscription.store_count > 0 && (() => {
+                    const priceNum = parseFloat(price);
+                    const storeCount = subscription.store_count;
+                    const discount = subscription.effective_discount_percent ?? subscription.discount_percent;
+                    const subtotal = priceNum * storeCount;
+                    const total = subtotal - (subtotal * discount / 100);
+                    return (
+                      <p className="mt-1.5 text-xs text-gray-500">
+                        <span className="font-medium text-gray-700">{formatCurrency(total)}/mo</span>
+                        {' '}for your {storeCount} stores
+                        {discount > 0 && <span className="text-green-600"> ({discount}% off)</span>}
+                      </p>
+                    );
+                  })()}
 
                   <div className="mt-5 mb-6 flex-1">
                     {plan.slug === 'pro' && (
@@ -514,7 +614,7 @@ export default function Billing() {
           </div>
 
           <p className="text-center text-xs text-gray-400 mt-4">
-            All plans include a 30-day free trial with full Enterprise access. No credit card required.
+            All plans include a 14-day free trial with full Enterprise access. No credit card required.
           </p>
         </div>
       )}

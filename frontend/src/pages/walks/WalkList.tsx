@@ -1,7 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import InfoButton from '../../components/InfoButton';
 import { getWalks, getStores, getRegions, deleteWalk } from '../../api/walks';
 import type { Walk, Store, Region } from '../../types';
 import { getOrgId } from '../../utils/org';
@@ -56,9 +55,8 @@ function ScoreBadge({ score }: { score: number | null }) {
   );
 }
 
-export default function WalkList() {
-  const { user } = useAuth();
-  const navigate = useNavigate();
+export function WalksListContent() {
+  const { hasRole } = useAuth();
   const [walks, setWalks] = useState<Walk[]>([]);
   const [stores, setStores] = useState<Store[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -182,7 +180,7 @@ export default function WalkList() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex items-center justify-center min-h-[40vh]">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
           <p className="text-gray-500 text-sm">Loading walks...</p>
@@ -192,16 +190,13 @@ export default function WalkList() {
   }
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
+    <>
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">Store Walks <InfoButton contextKey="walks-overview" /></h1>
-          <p className="mt-0.5 text-sm text-gray-500">
-            {loading ? 'Loading...' : `${groupedWalks.length} walk${groupedWalks.length !== 1 ? 's' : ''}`}
-            {hasActiveFilters ? ' (filtered)' : ''}
-          </p>
-        </div>
+        <p className="text-sm text-gray-500">
+          {groupedWalks.length} walk{groupedWalks.length !== 1 ? 's' : ''}
+          {hasActiveFilters ? ' (filtered)' : ''}
+        </p>
         <Link
           to="/walks/new"
           className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors shadow-sm"
@@ -220,7 +215,6 @@ export default function WalkList() {
             value={regionFilter}
             onChange={(e) => {
               setRegionFilter(e.target.value);
-              // Clear store filter if it doesn't belong to the selected region
               if (e.target.value && storeFilter) {
                 const storeRegion = storeRegionMap[storeFilter];
                 if (storeRegion !== e.target.value) setStoreFilter('');
@@ -436,7 +430,7 @@ export default function WalkList() {
                 {walk.status !== 'completed' && (
                   <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2">
                     <Link
-                      to={walk.status === 'in_progress' ? `/walks/${walk.id}/conduct` : `/walks/${walk.id}/conduct`}
+                      to={`/walks/${walk.id}/conduct`}
                       className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-primary-50 text-primary-700 text-xs font-semibold hover:bg-primary-100 transition-colors"
                     >
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -487,6 +481,6 @@ export default function WalkList() {
           />
         </svg>
       </Link>
-    </div>
+    </>
   );
 }

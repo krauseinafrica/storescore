@@ -58,6 +58,15 @@ def _ensure_org_resolved(request):
             request.membership = None
 
 
+def get_org_from_request(request):
+    """
+    Return the Organization attached to the request, resolving it if needed.
+    Returns None if no org could be determined.
+    """
+    _ensure_org_resolved(request)
+    return getattr(request, 'org', None)
+
+
 def has_minimum_role(membership, minimum_role):
     """Check if membership role meets or exceeds the minimum required role."""
     if membership is None:

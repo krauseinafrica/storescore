@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useSubscription } from '../hooks/useSubscription';
+import FeatureGate from '../components/FeatureGate';
 import InfoButton from '../components/InfoButton';
 import {
   getOrgSettings,
@@ -208,9 +210,12 @@ type Tab = 'organization' | 'goals' | 'settings' | 'billing';
 
 export default function Settings() {
   const { hasRole } = useAuth();
+  const { hasFeature } = useSubscription();
   const navigate = useNavigate();
   const orgId = getOrgId();
   const isAdmin = hasRole('admin');
+
+  const hasGamification = hasFeature('gamification_basic') || hasFeature('gamification_advanced');
 
   const [tab, setTab] = useState<Tab>('organization');
   const [loading, setLoading] = useState(true);
@@ -284,6 +289,34 @@ export default function Settings() {
     try {
       const updated = await updateOrgSettings(orgId, {
         allow_benchmarking: !settings.allow_benchmarking,
+      });
+      setSettings(updated);
+    } catch {
+      // ignore
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const handleDeadlineChange = async (field: string, value: number) => {
+    if (!orgId) return;
+    setSettingsSaving(true);
+    try {
+      const updated = await updateOrgSettings(orgId, { [field]: value });
+      setSettings(updated);
+    } catch {
+      // ignore
+    } finally {
+      setSettingsSaving(false);
+    }
+  };
+
+  const handleToggleGamification = async () => {
+    if (!settings || !orgId) return;
+    setSettingsSaving(true);
+    try {
+      const updated = await updateOrgSettings(orgId, {
+        gamification_enabled: !settings.gamification_enabled,
       });
       setSettings(updated);
     } catch {
@@ -657,6 +690,78 @@ export default function Settings() {
                 </div>
               </div>
             )}
+          </div>
+
+          {/* Gamification */}
+          {hasGamification ? (
+            <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-5 shadow-sm">
+              <div className="flex items-start justify-between">
+                <div>
+                  <h3 className="text-sm font-semibold text-gray-900">Gamification</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    Enable leaderboards, challenges, and achievement badges to drive engagement
+                    and friendly competition across your stores.
+                  </p>
+                </div>
+                <button
+                  onClick={handleToggleGamification}
+                  disabled={settingsSaving}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ml-4 ${
+                    settings?.gamification_enabled ? 'bg-primary-600' : 'bg-gray-200'
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform shadow-sm ${
+                      settings?.gamification_enabled ? 'translate-x-6' : 'translate-x-1'
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+          ) : (
+            <FeatureGate feature="gamification_basic" requiredPlan="Pro">
+              <div />
+            </FeatureGate>
+          )}
+
+          {/* Action Item Deadlines */}
+          <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-5 shadow-sm">
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+              Action Item Deadlines
+              <InfoButton contextKey="settings-deadlines" />
+            </h3>
+            <p className="text-xs text-gray-500 mt-0.5 mb-4">
+              Set default deadline durations (in days) for action items based on priority level.
+            </p>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {([
+                { field: 'action_item_deadline_critical', label: 'Critical', color: 'text-red-600', bg: 'bg-red-50' },
+                { field: 'action_item_deadline_high', label: 'High', color: 'text-orange-600', bg: 'bg-orange-50' },
+                { field: 'action_item_deadline_medium', label: 'Medium', color: 'text-amber-600', bg: 'bg-amber-50' },
+                { field: 'action_item_deadline_low', label: 'Low', color: 'text-blue-600', bg: 'bg-blue-50' },
+              ] as const).map((item) => (
+                <div key={item.field} className={`${item.bg} rounded-lg p-3`}>
+                  <label className={`block text-xs font-semibold ${item.color} mb-1.5`}>
+                    {item.label}
+                  </label>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      min={1}
+                      max={365}
+                      value={settings?.[item.field as keyof OrgSettingsData] as number ?? ''}
+                      onChange={(e) => {
+                        const val = parseInt(e.target.value, 10);
+                        if (val > 0 && val <= 365) handleDeadlineChange(item.field, val);
+                      }}
+                      disabled={settingsSaving}
+                      className="w-16 rounded-lg border-gray-300 text-sm text-center shadow-sm focus:border-primary-500 focus:ring-primary-500 disabled:opacity-50"
+                    />
+                    <span className="text-xs text-gray-500">days</span>
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}

@@ -180,6 +180,15 @@ export interface SOPCriterionLinkBrief {
   relevant_excerpt: string;
 }
 
+export interface CriterionReferenceImage {
+  id: string;
+  criterion: string;
+  image: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Criterion {
   id: string;
   name: string;
@@ -191,6 +200,7 @@ export interface Criterion {
   scoring_guidance: string;
   drivers?: Driver[];
   sop_links?: SOPCriterionLinkBrief[];
+  reference_images?: CriterionReferenceImage[];
 }
 
 export interface Section {
@@ -346,7 +356,7 @@ export interface CalendarToken {
 
 // --- Feature 2: Action Items ---
 
-export type ActionItemStatus = 'open' | 'in_progress' | 'resolved' | 'dismissed';
+export type ActionItemStatus = 'open' | 'in_progress' | 'resolved' | 'pending_review' | 'approved' | 'dismissed';
 export type ActionItemPriority = 'low' | 'medium' | 'high' | 'critical';
 
 export interface ActionItemPhoto {
@@ -369,25 +379,42 @@ export interface ActionItemResponse {
 
 export interface ActionItem {
   id: string;
-  walk: string;
+  walk: string | null;
   criterion_name: string;
   store_name: string;
   status: ActionItemStatus;
   priority: ActionItemPriority;
   assigned_to: string | null;
   assigned_to_name: string | null;
-  walk_date: string;
+  walk_date: string | null;
   due_date: string | null;
   response_count?: number;
+  description?: string;
+  is_manual?: boolean;
+  store?: string | null;
+  created_at: string;
+  reviewed_at?: string | null;
+  resolution_days?: number | null;
+}
+
+export interface ActionItemEvent {
+  id: string;
+  event_type: string;
+  actor: string | null;
+  actor_name: string;
+  notes: string;
+  old_status: string;
+  new_status: string;
+  metadata: Record<string, unknown>;
   created_at: string;
 }
 
 export interface ActionItemDetail extends ActionItem {
-  criterion: string;
+  criterion: string | null;
   criterion_description: string;
-  criterion_max_points: number;
-  score: string;
-  score_points: number;
+  criterion_max_points: number | null;
+  score: string | null;
+  score_points: number | null;
   original_photo: string | null;
   original_photo_url: string | null;
   created_by: string;
@@ -395,7 +422,14 @@ export interface ActionItemDetail extends ActionItem {
   description: string;
   resolved_at: string | null;
   resolved_by: string | null;
+  resolved_by_name: string | null;
+  reviewed_by: string | null;
+  reviewed_by_name: string | null;
+  reviewed_at: string | null;
+  review_notes: string;
   responses: ActionItemResponse[];
+  events: ActionItemEvent[];
+  resolution_days: number | null;
   updated_at: string;
 }
 
@@ -431,10 +465,15 @@ export interface AssessmentSubmission {
   prompt: string;
   prompt_name: string;
   image: string;
+  is_video: boolean;
   caption: string;
   self_rating: AssessmentRating | '';
   ai_analysis: string;
   ai_rating: AssessmentRating | '';
+  reviewer_rating: AssessmentRating | '';
+  reviewer_notes: string;
+  reviewed_by_name: string;
+  reviewed_at: string | null;
   submitted_at: string;
 }
 
@@ -456,6 +495,7 @@ export interface SelfAssessment {
   reviewed_at: string | null;
   reviewer_notes: string;
   submission_count?: number;
+  action_items_count?: number;
   submissions?: AssessmentSubmission[];
   prompts?: AssessmentPrompt[];
   created_at: string;
@@ -464,7 +504,7 @@ export interface SelfAssessment {
 
 // --- Corrective Actions ---
 
-export type CorrectiveActionType = 'overdue_evaluation' | 'unacknowledged_walk';
+export type CorrectiveActionType = 'overdue_evaluation' | 'unacknowledged_walk' | 'manual';
 export type EscalationLevel = 'reminder' | 'escalated' | 'critical';
 export type CorrectiveActionStatus = 'open' | 'resolved';
 
@@ -481,6 +521,7 @@ export interface CorrectiveAction {
   responsible_user_name: string | null;
   days_overdue: number;
   notes: string;
+  is_manual?: boolean;
   last_notified_at: string | null;
   resolved_at: string | null;
   created_at: string;
@@ -598,6 +639,73 @@ export interface Lead {
   demo_org: string | null;
   demo_expires_at: string | null;
   created_at: string;
+}
+
+// --- Gamification ---
+
+export type ChallengeType = 'score_target' | 'most_improved' | 'walk_count' | 'highest_score';
+export type AchievementTier = 'bronze' | 'silver' | 'gold' | 'platinum';
+export type AchievementCriteriaType = 'perfect_score' | 'score_above_90' | 'walk_streak' | 'score_streak' | 'walk_count' | 'improvement' | 'action_speed';
+
+export interface Challenge {
+  id: string;
+  name: string;
+  description: string;
+  challenge_type: ChallengeType;
+  scope: 'organization' | 'region';
+  region: string | null;
+  region_name: string | null;
+  target_value: number | null;
+  start_date: string;
+  end_date: string;
+  created_by: string;
+  created_by_name: string;
+  is_active: boolean;
+  is_ongoing: boolean;
+  days_remaining: number;
+  created_at: string;
+}
+
+export interface ChallengeStanding {
+  rank: number;
+  store_id: string;
+  store_name: string;
+  value: number;
+  meets_target: boolean;
+}
+
+export interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  icon_name: string;
+  tier: AchievementTier;
+  criteria_type: AchievementCriteriaType;
+  criteria_value: number;
+  is_active: boolean;
+  created_at: string;
+}
+
+export interface AwardedAchievement {
+  id: string;
+  achievement: Achievement;
+  store: string | null;
+  store_name: string | null;
+  user: string | null;
+  user_name: string | null;
+  walk: string | null;
+  awarded_at: string;
+}
+
+export interface LeaderboardEntry {
+  rank: number;
+  store_id: string;
+  store_name: string;
+  store_number: string;
+  region_name: string;
+  value: number;
+  change: number | null;
+  trend: 'up' | 'down' | 'stable';
 }
 
 // --- Data Integrations ---

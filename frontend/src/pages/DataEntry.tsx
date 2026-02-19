@@ -14,6 +14,28 @@ function todayISO(): string {
   return d.toISOString().slice(0, 10);
 }
 
+export function ManualEntryContent() {
+  const orgId = getOrgId();
+  const [stores, setStores] = useState<Store[]>([]);
+  const [loadingStores, setLoadingStores] = useState(true);
+
+  useEffect(() => {
+    if (!orgId) return;
+    setLoadingStores(true);
+    getStores(orgId)
+      .then(setStores)
+      .catch(() => {})
+      .finally(() => setLoadingStores(false));
+  }, [orgId]);
+
+  return <ManualEntryForm orgId={orgId} stores={stores} loadingStores={loadingStores} />;
+}
+
+export function CSVImportContent() {
+  const orgId = getOrgId();
+  return <CSVImportForm orgId={orgId} />;
+}
+
 export default function DataEntry() {
   const orgId = getOrgId();
   const [activeTab, setActiveTab] = useState<Tab>('manual');
@@ -30,9 +52,9 @@ export default function DataEntry() {
   }, [orgId]);
 
   return (
-    <div className="p-4 sm:p-6 lg:p-8 max-w-4xl mx-auto">
+    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
       <div className="mb-8">
-        <h1 className="text-2xl font-bold text-gray-900">Data Entry</h1>
+        <h1 className="text-xl font-bold text-gray-900">Data Entry</h1>
         <p className="mt-1 text-sm text-gray-500">
           Enter store metrics manually or import data from CSV files.
         </p>

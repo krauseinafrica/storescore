@@ -1,7 +1,7 @@
 {
   "name": "StoreScore",
   "short_name": "StoreScore",
-  "description": "Ace Hardware Store Quality Management",
+  "description": "StoreScore — Retail store audit and quality management platform.",
   "start_url": "/dashboard",
   "display": "standalone",
   "background_color": "#ffffff",

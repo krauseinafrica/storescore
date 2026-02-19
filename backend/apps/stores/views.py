@@ -3,7 +3,7 @@ import io
 import uuid
 from datetime import timedelta
 
-from django.db.models import Avg, Count, Q
+from django.db.models import Avg, Count, Q, StdDev
 from django.utils import timezone
 from rest_framework import status as http_status
 from rest_framework.decorators import action
@@ -11,15 +11,20 @@ from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.viewsets import ModelViewSet
+from rest_framework.viewsets import ModelViewSet, ReadOnlyModelViewSet
 
 from apps.billing.permissions import HasFeature
 from apps.core.permissions import IsOrgAdmin, IsOrgManagerOrAbove, IsOrgMember, get_accessible_store_ids
 from apps.walks.models import Walk
 
 from .integrations import IntegrationConfig, StoreDataPoint
-from .models import Goal, OrgSettings, Region, Store
+from .models import Achievement, AwardedAchievement, Challenge, Goal, OrgSettings, Region, Store
 from .serializers import (
+    AchievementSerializer,
+    AwardedAchievementSerializer,
+    ChallengeCreateSerializer,
+    ChallengeDetailSerializer,
+    ChallengeListSerializer,
     GoalSerializer,
     IntegrationConfigSerializer,
     OrgSettingsSerializer,
@@ -358,6 +363,439 @@ class BenchmarkingView(APIView):
             'distribution': [{'label': b['label'], 'count': b['count']} for b in buckets],
             'goals': goal_data,
         })
+
+
+# ==================== Phase 8: Gamification ====================
+
+
+class LeaderboardView(APIView):
+    """
+    GET /api/v1/stores/leaderboard/
+    Computed leaderboard from Walk data. Supports multiple ranking types.
+    Enterprise-only feature (gamification_advanced).
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), IsOrgMember(), HasFeature('gamification_advanced')]
+
+    def get(self, request):
+        from apps.walks.analytics import _completed_walks_qs, _parse_period
+
+        period = request.query_params.get('period', '30d')
+        lb_type = request.query_params.get('type', 'avg_score')
+        region_id = request.query_params.get('region')
+        limit = int(request.query_params.get('limit', '10'))
+
+        walks = _completed_walks_qs(request, period)
+
+        if region_id:
+            walks = walks.filter(store__region_id=region_id)
+
+        if not walks.exists():
+            return Response([])
+
+        if lb_type == 'walk_count':
+            return self._walk_count_leaderboard(walks, period, limit)
+        elif lb_type == 'most_improved':
+            return self._most_improved_leaderboard(walks, period, limit)
+        elif lb_type == 'consistency':
+            return self._consistency_leaderboard(walks, limit)
+        else:
+            return self._avg_score_leaderboard(walks, period, limit)
+
+    def _avg_score_leaderboard(self, walks, period, limit):
+        from apps.walks.analytics import _parse_period
+
+        store_data = (
+            walks
+            .values('store__id', 'store__name', 'store__store_number', 'store__region__name')
+            .annotate(avg_score=Avg('total_score'))
+            .order_by('-avg_score')[:limit]
+        )
+
+        # Compute prior period for change
+        start_date = _parse_period(period)
+        prior_avgs = {}
+        if start_date:
+            duration = timezone.now() - start_date
+            prev_start = start_date - duration
+            prev_walks = walks.model.objects.filter(
+                organization=walks.first().organization if walks.exists() else None,
+                status='completed',
+                total_score__isnull=False,
+                completed_date__gte=prev_start,
+                completed_date__lt=start_date,
+            )
+            for entry in prev_walks.values('store__id').annotate(avg=Avg('total_score')):
+                prior_avgs[entry['store__id']] = float(entry['avg'])
+
+        result = []
+        for idx, entry in enumerate(store_data):
+            store_id = entry['store__id']
+            current = float(entry['avg_score'])
+            prior = prior_avgs.get(store_id)
+            change = round(current - prior, 1) if prior is not None else None
+            trend = 'stable'
+            if change is not None:
+                if change > 2:
+                    trend = 'up'
+                elif change < -2:
+                    trend = 'down'
+
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(store_id),
+                'store_name': entry['store__name'],
+                'store_number': entry['store__store_number'] or '',
+                'region_name': entry['store__region__name'] or '',
+                'value': round(current, 1),
+                'change': change,
+                'trend': trend,
+            })
+
+        return Response(result)
+
+    def _walk_count_leaderboard(self, walks, period, limit):
+        store_data = (
+            walks
+            .values('store__id', 'store__name', 'store__store_number', 'store__region__name')
+            .annotate(walk_count=Count('id'))
+            .order_by('-walk_count')[:limit]
+        )
+
+        result = []
+        for idx, entry in enumerate(store_data):
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store__id']),
+                'store_name': entry['store__name'],
+                'store_number': entry['store__store_number'] or '',
+                'region_name': entry['store__region__name'] or '',
+                'value': entry['walk_count'],
+                'change': None,
+                'trend': 'stable',
+            })
+
+        return Response(result)
+
+    def _most_improved_leaderboard(self, walks, period, limit):
+        from apps.walks.analytics import _parse_period
+
+        start_date = _parse_period(period)
+        if not start_date:
+            return Response([])
+
+        duration = timezone.now() - start_date
+        prev_start = start_date - duration
+
+        # Current period averages
+        current_avgs = {}
+        for entry in walks.values('store__id', 'store__name', 'store__store_number', 'store__region__name').annotate(avg=Avg('total_score')):
+            current_avgs[entry['store__id']] = entry
+
+        # Prior period averages
+        org = walks.first().organization if walks.exists() else None
+        if not org:
+            return Response([])
+
+        prev_walks = Walk.objects.filter(
+            organization=org,
+            status='completed',
+            total_score__isnull=False,
+            completed_date__gte=prev_start,
+            completed_date__lt=start_date,
+        )
+        prior_avgs = {}
+        for entry in prev_walks.values('store__id').annotate(avg=Avg('total_score')):
+            prior_avgs[entry['store__id']] = float(entry['avg'])
+
+        # Calculate improvement
+        improvements = []
+        for store_id, data in current_avgs.items():
+            prior = prior_avgs.get(store_id)
+            if prior is not None:
+                improvement = float(data['avg']) - prior
+                improvements.append({
+                    'store_id': store_id,
+                    'store_name': data['store__name'],
+                    'store_number': data['store__store_number'] or '',
+                    'region_name': data['store__region__name'] or '',
+                    'value': round(improvement, 1),
+                    'change': round(improvement, 1),
+                })
+
+        improvements.sort(key=lambda x: x['value'], reverse=True)
+
+        result = []
+        for idx, entry in enumerate(improvements[:limit]):
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store_id']),
+                'store_name': entry['store_name'],
+                'store_number': entry['store_number'],
+                'region_name': entry['region_name'],
+                'value': entry['value'],
+                'change': entry['change'],
+                'trend': 'up' if entry['value'] > 0 else 'down' if entry['value'] < 0 else 'stable',
+            })
+
+        return Response(result)
+
+    def _consistency_leaderboard(self, walks, limit):
+        store_data = (
+            walks
+            .values('store__id', 'store__name', 'store__store_number', 'store__region__name')
+            .annotate(
+                score_stddev=StdDev('total_score'),
+                avg_score=Avg('total_score'),
+                walk_count=Count('id'),
+            )
+            .filter(walk_count__gte=2)
+            .order_by('score_stddev')[:limit]
+        )
+
+        result = []
+        for idx, entry in enumerate(store_data):
+            stddev = float(entry['score_stddev'] or 0)
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store__id']),
+                'store_name': entry['store__name'],
+                'store_number': entry['store__store_number'] or '',
+                'region_name': entry['store__region__name'] or '',
+                'value': round(float(entry['avg_score']), 1),
+                'change': round(stddev, 1),
+                'trend': 'stable',
+            })
+
+        return Response(result)
+
+
+class ChallengeViewSet(ModelViewSet):
+    """CRUD for challenges. Enterprise-only (gamification_advanced)."""
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve', 'standings'):
+            return [IsAuthenticated(), IsOrgMember(), HasFeature('gamification_advanced')]
+        return [IsAuthenticated(), IsOrgAdmin(), HasFeature('gamification_advanced')]
+
+    def get_serializer_class(self):
+        if self.action in ('create', 'update', 'partial_update'):
+            return ChallengeCreateSerializer
+        if self.action == 'retrieve':
+            return ChallengeDetailSerializer
+        return ChallengeListSerializer
+
+    def get_queryset(self):
+        qs = Challenge.objects.filter(
+            organization=self.request.org,
+        ).select_related('region', 'created_by')
+
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=self.request.org,
+            created_by=self.request.user,
+        )
+
+    @action(detail=True, methods=['get'], url_path='standings')
+    def standings(self, request, pk=None):
+        """Compute standings for a challenge based on its type."""
+        challenge = self.get_object()
+
+        walks = Walk.objects.filter(
+            organization=request.org,
+            status='completed',
+            total_score__isnull=False,
+            completed_date__date__gte=challenge.start_date,
+            completed_date__date__lte=challenge.end_date,
+        )
+
+        if challenge.scope == 'region' and challenge.region:
+            walks = walks.filter(store__region=challenge.region)
+
+        # Apply store scoping
+        accessible_ids = get_accessible_store_ids(request)
+        if accessible_ids is not None:
+            walks = walks.filter(store_id__in=accessible_ids)
+
+        if challenge.challenge_type == 'score_target':
+            standings = self._score_target_standings(walks, challenge)
+        elif challenge.challenge_type == 'most_improved':
+            standings = self._most_improved_standings(walks, challenge)
+        elif challenge.challenge_type == 'walk_count':
+            standings = self._walk_count_standings(walks)
+        elif challenge.challenge_type == 'highest_score':
+            standings = self._highest_score_standings(walks)
+        else:
+            standings = []
+
+        return Response(standings)
+
+    def _score_target_standings(self, walks, challenge):
+        data = (
+            walks
+            .values('store__id', 'store__name')
+            .annotate(avg_score=Avg('total_score'))
+            .order_by('-avg_score')
+        )
+        target = float(challenge.target_value) if challenge.target_value else 0
+        result = []
+        for idx, entry in enumerate(data):
+            val = round(float(entry['avg_score']), 1)
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store__id']),
+                'store_name': entry['store__name'],
+                'value': val,
+                'meets_target': val >= target,
+            })
+        return result
+
+    def _most_improved_standings(self, walks, challenge):
+        duration = challenge.end_date - challenge.start_date
+        prev_start = challenge.start_date - duration
+
+        current_avgs = {}
+        for entry in walks.values('store__id', 'store__name').annotate(avg=Avg('total_score')):
+            current_avgs[entry['store__id']] = {'name': entry['store__name'], 'avg': float(entry['avg'])}
+
+        prev_walks = Walk.objects.filter(
+            organization=walks.first().organization if walks.exists() else None,
+            status='completed',
+            total_score__isnull=False,
+            completed_date__date__gte=prev_start,
+            completed_date__date__lt=challenge.start_date,
+        )
+        prior_avgs = {}
+        for entry in prev_walks.values('store__id').annotate(avg=Avg('total_score')):
+            prior_avgs[entry['store__id']] = float(entry['avg'])
+
+        improvements = []
+        for store_id, data in current_avgs.items():
+            prior = prior_avgs.get(store_id)
+            if prior is not None:
+                improvement = data['avg'] - prior
+                improvements.append({
+                    'store_id': str(store_id),
+                    'store_name': data['name'],
+                    'value': round(improvement, 1),
+                    'meets_target': True,
+                })
+
+        improvements.sort(key=lambda x: x['value'], reverse=True)
+        for idx, entry in enumerate(improvements):
+            entry['rank'] = idx + 1
+        return improvements
+
+    def _walk_count_standings(self, walks):
+        data = (
+            walks
+            .values('store__id', 'store__name')
+            .annotate(walk_count=Count('id'))
+            .order_by('-walk_count')
+        )
+        result = []
+        for idx, entry in enumerate(data):
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store__id']),
+                'store_name': entry['store__name'],
+                'value': entry['walk_count'],
+                'meets_target': True,
+            })
+        return result
+
+    def _highest_score_standings(self, walks):
+        from django.db.models import Max
+        data = (
+            walks
+            .values('store__id', 'store__name')
+            .annotate(max_score=Max('total_score'))
+            .order_by('-max_score')
+        )
+        result = []
+        for idx, entry in enumerate(data):
+            result.append({
+                'rank': idx + 1,
+                'store_id': str(entry['store__id']),
+                'store_name': entry['store__name'],
+                'value': round(float(entry['max_score']), 1),
+                'meets_target': True,
+            })
+        return result
+
+
+class AchievementViewSet(ReadOnlyModelViewSet):
+    """Read-only viewset for achievements. Requires gamification_basic (Pro+)."""
+    serializer_class = AchievementSerializer
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get_permissions(self):
+        return [IsAuthenticated(), IsOrgMember(), HasFeature('gamification_basic')]
+
+    def _has_advanced(self, request):
+        """Check if the current plan has gamification_advanced."""
+        plan = getattr(request, 'plan', None)
+        if plan and plan.has_feature('gamification_advanced'):
+            return True
+        # Platform admins bypass
+        if getattr(request.user, 'is_staff', False) or getattr(request.user, 'is_superuser', False):
+            return True
+        return False
+
+    def get_queryset(self):
+        qs = Achievement.objects.filter(is_active=True)
+        if not self._has_advanced(self.request):
+            qs = qs.filter(plan_tier='basic')
+        return qs
+
+    @action(detail=False, methods=['get'], url_path='awarded')
+    def awarded(self, request):
+        """Get achievements awarded to stores in this organization."""
+        awards = AwardedAchievement.objects.filter(
+            organization=request.org,
+        ).select_related('achievement', 'store', 'user').order_by('-awarded_at')
+
+        if not self._has_advanced(request):
+            awards = awards.filter(achievement__plan_tier='basic')
+
+        store_id = request.query_params.get('store')
+        if store_id:
+            awards = awards.filter(store_id=store_id)
+
+        serializer = AwardedAchievementSerializer(awards, many=True)
+        return Response(serializer.data)
+
+    @action(detail=False, methods=['post'], url_path='check')
+    def check(self, request):
+        """Manually trigger achievement check for a specific walk."""
+        walk_id = request.data.get('walk_id')
+        if not walk_id:
+            return Response(
+                {'detail': 'walk_id is required.'},
+                status=http_status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            walk = Walk.objects.get(id=walk_id, organization=request.org)
+        except Walk.DoesNotExist:
+            return Response(
+                {'detail': 'Walk not found.'},
+                status=http_status.HTTP_404_NOT_FOUND,
+            )
+
+        from .achievements import check_achievements_for_walk
+        has_advanced = self._has_advanced(request)
+        newly_awarded = check_achievements_for_walk(walk, include_advanced=has_advanced)
+        serializer = AwardedAchievementSerializer(newly_awarded, many=True)
+        return Response(serializer.data)
 
 
 # ==================== Phase 4.5: Data Integrations ====================

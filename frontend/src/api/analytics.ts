@@ -135,6 +135,99 @@ export interface EvaluatorConsistencyData {
   }>;
 }
 
+// --- Phase 5.8: New types ---
+
+export interface SectionStoreData {
+  section_name: string;
+  org_avg: number;
+  stores: Array<{
+    store_id: string;
+    store_name: string;
+    avg_percentage: number;
+    walk_count: number;
+  }>;
+  criteria: Array<{
+    name: string;
+    avg_percentage: number;
+  }>;
+}
+
+export interface EvaluatorTrendsData {
+  evaluator_id: string;
+  evaluator_name: string;
+  monthly_scores: Array<{
+    month: string;
+    avg_score: number;
+    org_avg: number;
+    walk_count: number;
+  }>;
+  section_bias: Array<{
+    section_name: string;
+    evaluator_avg: number;
+    org_avg: number;
+    difference: number;
+  }>;
+  store_comparison: Array<{
+    store_id: string;
+    store_name: string;
+    evaluator_avg: number;
+    org_avg: number;
+  }>;
+}
+
+export interface ActionItemAnalyticsData {
+  total: number;
+  open: number;
+  in_progress: number;
+  resolved: number;
+  dismissed: number;
+  avg_resolution_days: number | null;
+  by_store: Array<{
+    store_id: string;
+    store_name: string;
+    total: number;
+    open: number;
+    resolved: number;
+  }>;
+  by_section: Array<{
+    section_name: string;
+    count: number;
+  }>;
+  by_priority: Array<{
+    priority: string;
+    count: number;
+  }>;
+  monthly_trend: Array<{
+    month: string;
+    created: number;
+    resolved: number;
+  }>;
+}
+
+export interface DriverAnalyticsData {
+  total_selections: number;
+  total_configured: number;
+  top_drivers: Array<{
+    name: string;
+    count: number;
+    criterion_name: string;
+  }>;
+  by_section: Array<{
+    section_name: string;
+    count: number;
+    top_driver: string | null;
+  }>;
+  by_store: Array<{
+    store_id: string;
+    store_name: string;
+    count: number;
+  }>;
+  monthly_trend: Array<{
+    month: string;
+    count: number;
+  }>;
+}
+
 // ---------- API Functions ----------
 
 export async function getOverview(
@@ -295,4 +388,63 @@ export async function exportCSV(
   link.click();
   document.body.removeChild(link);
   window.URL.revokeObjectURL(url);
+}
+
+// --- Phase 5.8: New API functions ---
+
+export async function getSectionStoreComparison(
+  orgId: string,
+  params: { section: string; period?: Period }
+): Promise<SectionStoreData> {
+  const response = await api.get<SectionStoreData>(
+    '/walks/analytics/section-stores/',
+    {
+      headers: { 'X-Organization': orgId },
+      params,
+    }
+  );
+  return response.data;
+}
+
+export async function getEvaluatorTrends(
+  orgId: string,
+  evaluatorId: string,
+  period: Period = '90d'
+): Promise<EvaluatorTrendsData> {
+  const response = await api.get<EvaluatorTrendsData>(
+    `/walks/analytics/evaluator-trends/${evaluatorId}/`,
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period },
+    }
+  );
+  return response.data;
+}
+
+export async function getActionItemAnalytics(
+  orgId: string,
+  period: Period = '90d'
+): Promise<ActionItemAnalyticsData> {
+  const response = await api.get<ActionItemAnalyticsData>(
+    '/walks/analytics/action-items/',
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period },
+    }
+  );
+  return response.data;
+}
+
+export async function getDriverAnalytics(
+  orgId: string,
+  period: Period = '90d'
+): Promise<DriverAnalyticsData> {
+  const response = await api.get<DriverAnalyticsData>(
+    '/walks/analytics/drivers/',
+    {
+      headers: { 'X-Organization': orgId },
+      params: { period },
+    }
+  );
+  return response.data;
 }

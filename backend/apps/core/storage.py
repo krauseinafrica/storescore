@@ -101,6 +101,18 @@ def assessment_photo_path(instance, filename):
     return f'{org_slug}/{store_slug}/assessments/{assessment_id}/{unique}_{filename}'
 
 
+def criterion_reference_image_path(instance, filename):
+    """Upload path for criterion reference images.
+    Result: {org_slug}/_reference_images/{criterion_id}/{uuid}_{filename}
+    """
+    org_slug = _safe_slug(instance.criterion.section.template.organization.slug
+                          if instance.criterion.section.template
+                          else instance.criterion.section.department.organization.slug)
+    criterion_id = str(instance.criterion.id)[:8]
+    unique = uuid.uuid4().hex[:8]
+    return f'{org_slug}/_reference_images/{criterion_id}/{unique}_{filename}'
+
+
 def sop_document_path(instance, filename):
     """Upload path for SOP documents.
     Result: {org_slug}/_sop_documents/{uuid}_{filename}

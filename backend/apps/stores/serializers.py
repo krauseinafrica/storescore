@@ -1,7 +1,7 @@
 from rest_framework import serializers
 
 from .integrations import IntegrationConfig, StoreDataPoint
-from .models import Goal, OrgSettings, Region, Store
+from .models import Achievement, AwardedAchievement, Challenge, Goal, OrgSettings, Region, Store
 
 
 class RegionChildSerializer(serializers.ModelSerializer):
@@ -114,6 +114,9 @@ class OrgSettingsSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'subscription_tier', 'ai_photo_analysis',
             'allow_benchmarking', 'benchmarking_period_days',
+            'gamification_enabled',
+            'action_item_deadline_critical', 'action_item_deadline_high',
+            'action_item_deadline_medium', 'action_item_deadline_low',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'subscription_tier', 'created_at', 'updated_at']
@@ -188,3 +191,102 @@ class StoreDataPointSerializer(serializers.ModelSerializer):
                     'Store does not belong to this organization.'
                 )
         return value
+
+
+# ==================== Phase 8: Gamification ====================
+
+
+class ChallengeListSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+    region_name = serializers.CharField(source='region.name', read_only=True, default=None)
+    is_ongoing = serializers.BooleanField(read_only=True)
+    days_remaining = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Challenge
+        fields = [
+            'id', 'name', 'challenge_type', 'scope',
+            'region', 'region_name', 'target_value',
+            'start_date', 'end_date', 'is_active',
+            'is_ongoing', 'days_remaining',
+            'created_by', 'created_by_name',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return f'{obj.created_by.first_name} {obj.created_by.last_name}'.strip() or obj.created_by.email
+        return None
+
+
+class ChallengeDetailSerializer(ChallengeListSerializer):
+    description = serializers.CharField(required=False, default='')
+
+    class Meta(ChallengeListSerializer.Meta):
+        fields = ChallengeListSerializer.Meta.fields + ['description']
+
+
+class ChallengeCreateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Challenge
+        fields = [
+            'name', 'description', 'challenge_type', 'scope',
+            'region', 'target_value', 'start_date', 'end_date', 'is_active',
+        ]
+
+    def validate(self, attrs):
+        if attrs.get('end_date') and attrs.get('start_date'):
+            if attrs['end_date'] <= attrs['start_date']:
+                raise serializers.ValidationError(
+                    {'end_date': 'End date must be after start date.'}
+                )
+        scope = attrs.get('scope', 'organization')
+        if scope == 'region' and not attrs.get('region'):
+            raise serializers.ValidationError(
+                {'region': 'Region is required when scope is region.'}
+            )
+        if scope == 'organization':
+            attrs['region'] = None
+        return attrs
+
+
+class AchievementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Achievement
+        fields = [
+            'id', 'name', 'description', 'icon_name', 'tier',
+            'criteria_type', 'criteria_value', 'plan_tier', 'is_active',
+            'created_at',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class AwardedAchievementSerializer(serializers.ModelSerializer):
+    achievement = AchievementSerializer(read_only=True)
+    store_name = serializers.CharField(source='store.name', read_only=True, default=None)
+    user_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AwardedAchievement
+        fields = [
+            'id', 'achievement', 'store', 'store_name',
+            'user', 'user_name', 'walk', 'awarded_at',
+        ]
+        read_only_fields = ['id', 'awarded_at']
+
+    def get_user_name(self, obj):
+        if obj.user:
+            return f'{obj.user.first_name} {obj.user.last_name}'.strip() or obj.user.email
+        return None
+
+
+class LeaderboardEntrySerializer(serializers.Serializer):
+    rank = serializers.IntegerField()
+    store_id = serializers.CharField()
+    store_name = serializers.CharField()
+    store_number = serializers.CharField()
+    region_name = serializers.CharField()
+    value = serializers.FloatField()
+    change = serializers.FloatField(allow_null=True)
+    trend = serializers.CharField()

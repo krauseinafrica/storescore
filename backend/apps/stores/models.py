@@ -2,6 +2,7 @@ import uuid
 
 from django.conf import settings
 from django.db import models
+from django.utils import timezone
 
 from apps.core.models import OrgScopedModel, TimestampedModel
 
@@ -159,6 +160,30 @@ class OrgSettings(TimestampedModel):
         help_text='Number of days to look back for benchmarking data.',
     )
 
+    # Gamification
+    gamification_enabled = models.BooleanField(
+        default=False,
+        help_text='Enable leaderboards, challenges, and achievements.',
+    )
+
+    # Action item default deadlines (in business days)
+    action_item_deadline_critical = models.PositiveIntegerField(
+        default=1,
+        help_text='Default deadline in days for critical priority action items.',
+    )
+    action_item_deadline_high = models.PositiveIntegerField(
+        default=3,
+        help_text='Default deadline in days for high priority action items.',
+    )
+    action_item_deadline_medium = models.PositiveIntegerField(
+        default=7,
+        help_text='Default deadline in days for medium priority action items.',
+    )
+    action_item_deadline_low = models.PositiveIntegerField(
+        default=14,
+        help_text='Default deadline in days for low priority action items.',
+    )
+
     class Meta:
         db_table = 'stores_orgsettings'
 
@@ -211,3 +236,156 @@ class Goal(OrgScopedModel):
 
     def __str__(self):
         return f'{self.name} ({self.goal_type})'
+
+
+# ==================== Phase 8: Gamification ====================
+
+
+class Challenge(OrgScopedModel):
+    """Admin-created time-bound competitions between stores."""
+
+    class ChallengeType(models.TextChoices):
+        SCORE_TARGET = 'score_target', 'Score Target'
+        MOST_IMPROVED = 'most_improved', 'Most Improved'
+        WALK_COUNT = 'walk_count', 'Walk Count'
+        HIGHEST_SCORE = 'highest_score', 'Highest Score'
+
+    class Scope(models.TextChoices):
+        ORGANIZATION = 'organization', 'Organization-wide'
+        REGION = 'region', 'Region'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    challenge_type = models.CharField(max_length=20, choices=ChallengeType.choices)
+    scope = models.CharField(max_length=20, choices=Scope.choices, default=Scope.ORGANIZATION)
+    region = models.ForeignKey(
+        Region,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='challenges',
+        help_text='Target region (when scope is region).',
+    )
+    target_value = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        help_text='Target value (e.g. 85.0 for score_target).',
+    )
+    start_date = models.DateField()
+    end_date = models.DateField()
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name='created_challenges',
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'stores_challenge'
+        ordering = ['-start_date']
+
+    def __str__(self):
+        return self.name
+
+    @property
+    def is_ongoing(self):
+        today = timezone.now().date()
+        return self.start_date <= today <= self.end_date
+
+    @property
+    def days_remaining(self):
+        today = timezone.now().date()
+        if today > self.end_date:
+            return 0
+        return (self.end_date - today).days
+
+
+class Achievement(TimestampedModel):
+    """Platform-level badge definitions (not org-scoped)."""
+
+    class Tier(models.TextChoices):
+        BRONZE = 'bronze', 'Bronze'
+        SILVER = 'silver', 'Silver'
+        GOLD = 'gold', 'Gold'
+        PLATINUM = 'platinum', 'Platinum'
+
+    class CriteriaType(models.TextChoices):
+        PERFECT_SCORE = 'perfect_score', 'Perfect Score'
+        SCORE_ABOVE_90 = 'score_above_90', 'Score Above 90%'
+        WALK_STREAK = 'walk_streak', 'Walk Streak'
+        SCORE_STREAK = 'score_streak', 'Score Streak'
+        WALK_COUNT = 'walk_count', 'Walk Count'
+        IMPROVEMENT = 'improvement', 'Improvement'
+        ACTION_SPEED = 'action_speed', 'Action Speed'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default='')
+    icon_name = models.CharField(max_length=50, default='star')
+    tier = models.CharField(max_length=10, choices=Tier.choices, default=Tier.BRONZE)
+    criteria_type = models.CharField(max_length=20, choices=CriteriaType.choices)
+    criteria_value = models.DecimalField(
+        max_digits=8, decimal_places=2,
+        help_text='Threshold value for criteria evaluation.',
+    )
+    plan_tier = models.CharField(
+        max_length=20,
+        choices=[('basic', 'Basic'), ('advanced', 'Advanced')],
+        default='basic',
+        help_text='Which subscription tier unlocks this achievement.',
+    )
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'stores_achievement'
+        ordering = ['tier', 'name']
+
+    def __str__(self):
+        return f'{self.name} ({self.get_tier_display()})'
+
+
+class AwardedAchievement(OrgScopedModel):
+    """Tracks earned badges for stores/users within an organization."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    achievement = models.ForeignKey(
+        Achievement,
+        on_delete=models.CASCADE,
+        related_name='awards',
+    )
+    store = models.ForeignKey(
+        Store,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='awarded_achievements',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='awarded_achievements',
+    )
+    walk = models.ForeignKey(
+        'walks.Walk',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='awarded_achievements',
+        help_text='The walk that triggered this achievement.',
+    )
+    awarded_at = models.DateTimeField(default=timezone.now)
+
+    class Meta:
+        db_table = 'stores_awardedachievement'
+        ordering = ['-awarded_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['achievement', 'organization', 'store'],
+                name='unique_achievement_per_org_store',
+            ),
+        ]
+
+    def __str__(self):
+        target = self.store.name if self.store else (self.user.email if self.user else 'Unknown')
+        return f'{self.achievement.name} -> {target}'

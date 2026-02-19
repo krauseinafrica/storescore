@@ -25,7 +25,7 @@ function formatDate(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-export default function Schedules() {
+export function SchedulesContent() {
   const { hasRole } = useAuth();
   const orgId = getOrgId();
   const isAdmin = hasRole('admin');
@@ -171,20 +171,17 @@ export default function Schedules() {
 
   if (loading) {
     return (
-      <div className="px-4 sm:px-6 lg:px-8 py-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 bg-gray-200 rounded w-48" />
-          <div className="h-40 bg-gray-200 rounded" />
-        </div>
+      <div className="animate-pulse space-y-4">
+        <div className="h-8 bg-gray-200 rounded w-48" />
+        <div className="h-40 bg-gray-200 rounded" />
       </div>
     );
   }
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
+    <>
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">Evaluation Schedules <InfoButton contextKey="schedules-overview" /></h1>
           <p className="text-sm text-gray-500 mt-0.5">Auto-schedule recurring store walks with reminders.</p>
         </div>
         {isAdmin && (
@@ -342,6 +339,17 @@ export default function Schedules() {
           </div>
         </div>
       )}
+    </>
+  );
+}
+
+export default function Schedules() {
+  return (
+    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">Evaluation Schedules <InfoButton contextKey="schedules-overview" /></h1>
+      </div>
+      <SchedulesContent />
     </div>
   );
 }

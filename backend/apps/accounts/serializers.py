@@ -6,7 +6,7 @@ from django.utils.text import slugify
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Membership, Organization, RegionAssignment, StoreAssignment, User
+from .models import Membership, Organization, RegionAssignment, StoreAssignment, SupportTicket, TicketMessage, User
 
 
 class UserSerializer(serializers.ModelSerializer):
@@ -327,5 +327,47 @@ class UpdateMemberRoleSerializer(serializers.Serializer):
     )
     store_ids = serializers.ListField(
         child=serializers.UUIDField(),
+        required=False,
+    )
+
+
+class TicketMessageSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+
+    class Meta:
+        model = TicketMessage
+        fields = ['id', 'user', 'message', 'created_at']
+        read_only_fields = ['id', 'user', 'created_at']
+
+
+class SupportTicketSerializer(serializers.ModelSerializer):
+    user = UserSerializer(read_only=True)
+    messages = TicketMessageSerializer(many=True, read_only=True)
+    organization_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SupportTicket
+        fields = [
+            'id', 'subject', 'description', 'status', 'priority', 'category',
+            'resolution_notes', 'source', 'external_id',
+            'user', 'organization_name', 'messages',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'user', 'organization_name', 'messages', 'source', 'external_id', 'created_at', 'updated_at']
+
+    def get_organization_name(self, obj):
+        return obj.organization.name if obj.organization else None
+
+
+class SupportTicketCreateSerializer(serializers.Serializer):
+    subject = serializers.CharField(max_length=255)
+    description = serializers.CharField()
+    priority = serializers.ChoiceField(
+        choices=['low', 'medium', 'high'],
+        default='medium',
+    )
+    category = serializers.ChoiceField(
+        choices=['bug', 'ui_feedback', 'enhancement', 'question', 'other'],
+        default='other',
         required=False,
     )

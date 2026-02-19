@@ -125,3 +125,14 @@ export async function updateLeadStatus(id: string, status: string): Promise<unkn
   const response = await api.patch(`/auth/leads/${id}/`, { status });
   return response.data;
 }
+
+export async function captureEmail(data: {
+  email: string;
+  first_name?: string;
+  last_name?: string;
+  company_name?: string;
+  source?: string;
+}): Promise<{ id: string; message: string; existing?: boolean }> {
+  const response = await api.post('/auth/email-capture/', data);
+  return response.data;
+}

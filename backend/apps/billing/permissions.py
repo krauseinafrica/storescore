@@ -22,6 +22,24 @@ class HasFeature(BasePermission):
             return True
 
         plan = getattr(request, 'plan', None)
+
+        # Lazily resolve subscription/plan for JWT-authenticated requests where
+        # SubscriptionMiddleware couldn't attach it (because OrgMiddleware runs
+        # before DRF authentication, so request.org was None at middleware time).
+        if plan is None:
+            org = getattr(request, 'org', None)
+            if org is not None:
+                from apps.billing.models import Subscription
+                try:
+                    subscription = Subscription.objects.select_related('plan').get(
+                        organization=org,
+                    )
+                    request.subscription = subscription
+                    request.plan = subscription.plan
+                    plan = subscription.plan
+                except Subscription.DoesNotExist:
+                    pass
+
         if plan is None:
             return False
 
@@ -41,6 +59,21 @@ class HasActiveSubscription(BasePermission):
             return True
 
         subscription = getattr(request, 'subscription', None)
+
+        # Lazily resolve subscription for JWT-authenticated requests
+        if subscription is None:
+            org = getattr(request, 'org', None)
+            if org is not None:
+                from apps.billing.models import Subscription
+                try:
+                    subscription = Subscription.objects.select_related('plan').get(
+                        organization=org,
+                    )
+                    request.subscription = subscription
+                    request.plan = subscription.plan
+                except Subscription.DoesNotExist:
+                    pass
+
         if subscription is None:
             return False
         return subscription.is_active_subscription

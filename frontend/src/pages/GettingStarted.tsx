@@ -1,7 +1,8 @@
 import { useEffect, useState, useMemo, useCallback } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
-import { getOnboardingLessons, completeLesson, uncompleteLesson } from '../api/onboarding';
+import { getOnboardingLessons, completeLesson, uncompleteLesson, getQuickStartProgress } from '../api/onboarding';
+import type { QuickStartProgress } from '../api/onboarding';
 import { getStores } from '../api/walks';
 import { getOrgId } from '../utils/org';
 import TierBadge from '../components/TierBadge';
@@ -24,6 +25,7 @@ export default function GettingStarted() {
   const [activeId, setActiveId] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
   const [mobileListExpanded, setMobileListExpanded] = useState(true);
+  const [quickStart, setQuickStart] = useState<QuickStartProgress | null>(null);
 
   const getLessonSlug = useCallback((lesson: OnboardingLesson) => {
     return lesson.section_content?.anchor || slugify(lesson.title);
@@ -33,13 +35,15 @@ export default function GettingStarted() {
     let cancelled = false;
     async function load() {
       try {
-        const [data, stores] = await Promise.all([
+        const [data, stores, qs] = await Promise.all([
           getOnboardingLessons(),
           orgId ? getStores(orgId).catch(() => []) : Promise.resolve([]),
+          orgId ? getQuickStartProgress(orgId).catch(() => null) : Promise.resolve(null),
         ]);
         if (!cancelled) {
           setHasStores(stores.length > 0);
           setLessons(data);
+          if (qs) setQuickStart(qs);
           if (data.length > 0) {
             const hash = location.hash.replace('#', '');
             // Try to restore from URL hash
@@ -175,6 +179,80 @@ export default function GettingStarted() {
           />
         </div>
       </div>
+
+      {/* Quick Start — Horizontal Steps */}
+      {quickStart && (() => {
+        const steps = [
+          { key: 'stores', label: 'Add a store', num: '1', link: '/stores', done: quickStart.stores > 0 },
+          { key: 'departments', label: 'Add departments', num: '2', link: '/departments', done: quickStart.departments > 0 },
+          { key: 'dept_applied', label: 'Apply to stores', num: '3', link: '/departments', done: quickStart.departments_applied > 0 },
+          { key: 'team_members', label: 'Invite team', num: '4', link: '/team', done: quickStart.team_members >= 2 },
+          { key: 'templates', label: 'Scoring template', num: '5', link: '/templates', done: quickStart.templates > 0 },
+          { key: 'goals', label: 'Set a goal', num: '6', link: '/settings', done: quickStart.org_configured },
+          { key: 'walks', label: 'First walk', num: '7', link: '/evaluations', done: quickStart.walks > 0 },
+          { key: 'ai_summaries', label: 'AI summary', num: '8', link: '/evaluations', done: quickStart.ai_summaries > 0 },
+        ];
+        const firstIncompleteIdx = steps.findIndex(s => !s.done);
+        return (
+          <div className="mb-6 bg-white rounded-lg border border-gray-200 px-5 py-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-semibold text-gray-900">Quick Start</h3>
+              <span className="text-xs text-gray-400">{steps.filter(s => s.done).length}/{steps.length} complete</span>
+            </div>
+            <div
+              className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1"
+              ref={el => {
+                if (el && firstIncompleteIdx > 0) {
+                  const target = el.children[firstIncompleteIdx] as HTMLElement;
+                  if (target) {
+                    el.scrollTo({ left: target.offsetLeft - 16, behavior: 'smooth' });
+                  }
+                }
+              }}
+            >
+              {steps.map((step, idx) => {
+                const isCurrent = idx === firstIncompleteIdx;
+                return (
+                  <Link
+                    key={step.key}
+                    to={step.link}
+                    onClick={() => sessionStorage.setItem('from_getting_started', '1')}
+                    className={`flex-shrink-0 flex items-center gap-2.5 pl-2.5 pr-3.5 py-2 rounded-lg border transition-all ${
+                      step.done
+                        ? 'bg-green-50 border-green-200 opacity-70'
+                        : isCurrent
+                          ? 'bg-primary-50 border-primary-300 ring-2 ring-primary-200 shadow-sm'
+                          : 'bg-gray-50 border-gray-200 hover:border-gray-300 hover:bg-gray-100'
+                    }`}
+                  >
+                    {step.done ? (
+                      <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                      </svg>
+                    ) : (
+                      <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[11px] font-bold flex-shrink-0 ${
+                        isCurrent ? 'bg-primary-600 text-white' : 'bg-gray-200 text-gray-500'
+                      }`}>
+                        {step.num}
+                      </span>
+                    )}
+                    <span className={`text-xs font-medium whitespace-nowrap ${
+                      step.done ? 'text-green-700 line-through' : isCurrent ? 'text-primary-700' : 'text-gray-600'
+                    }`}>
+                      {step.label}
+                    </span>
+                    {isCurrent && (
+                      <svg className="w-3 h-3 text-primary-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                      </svg>
+                    )}
+                  </Link>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Left panel — lesson list (collapsible on mobile) */}

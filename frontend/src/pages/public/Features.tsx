@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import SEO from '../../components/SEO';
 
 interface FeatureSection {
   title: string;
@@ -141,6 +142,11 @@ const features: FeatureSection[] = [
 export default function Features() {
   return (
     <div>
+      <SEO
+        title="Features | StoreScore — Store Walks, AI Reports, Action Items & More"
+        description="Store walks, AI summaries, team management, reporting dashboards, corrective actions, scheduling, SOP management, and data integrations — all in one retail audit platform."
+        path="/features"
+      />
       <section className="relative overflow-hidden bg-gradient-to-b from-gray-50 to-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 sm:py-28">
           <div className="text-center max-w-3xl mx-auto">

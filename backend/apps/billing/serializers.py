@@ -19,6 +19,7 @@ class SubscriptionSerializer(serializers.ModelSerializer):
     plan_slug = serializers.CharField(source='plan.slug', read_only=True)
     plan_features = serializers.JSONField(source='plan.features', read_only=True)
     is_active_subscription = serializers.BooleanField(read_only=True)
+    effective_discount_percent = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Subscription
@@ -29,6 +30,8 @@ class SubscriptionSerializer(serializers.ModelSerializer):
             'trial_start', 'trial_end',
             'current_period_start', 'current_period_end',
             'cancel_at_period_end', 'discount_percent',
+            'promo_discount_name', 'promo_discount_percent',
+            'effective_discount_percent',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields

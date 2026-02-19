@@ -413,6 +413,30 @@ def check_overdue_action_items(self):
     logger.info(f'Overdue action items: notified {len(by_user)} users')
 
 
+@shared_task(bind=True)
+def check_pending_review_action_items(self):
+    """
+    Daily task: remind reviewers about action items stuck in pending_review for 3+ days.
+    """
+    from .models import ActionItem
+    from .services import send_pending_review_reminder
+
+    threshold = date.today() - timedelta(days=3)
+    stale_items = ActionItem.objects.filter(
+        status=ActionItem.Status.PENDING_REVIEW,
+        resolved_at__date__lte=threshold,
+    ).select_related(
+        'walk__store', 'store', 'resolved_by', 'assigned_to', 'organization',
+    )
+
+    count = 0
+    for item in stale_items:
+        send_pending_review_reminder(item)
+        count += 1
+
+    logger.info(f'Pending review reminders: sent {count} reminders')
+
+
 # ==================== Feature 3: Self-Assessment AI Evaluation ====================
 
 
@@ -420,12 +444,13 @@ def check_overdue_action_items(self):
 def process_assessment_submissions(self, assessment_id: str):
     """
     After a self-assessment is submitted, run AI evaluation on each photo.
+    Uses Gemini 2.5 Flash for vision analysis with 768px downsampling.
     """
-    import base64
+    import io
     import re
 
-    import anthropic
     from django.conf import settings
+    from PIL import Image
 
     from .models import SelfAssessment
 
@@ -437,67 +462,125 @@ def process_assessment_submissions(self, assessment_id: str):
         logger.error(f'SelfAssessment {assessment_id} not found')
         return
 
-    if not settings.ANTHROPIC_API_KEY:
-        logger.warning('ANTHROPIC_API_KEY not configured, skipping AI evaluation')
+    if not settings.GEMINI_API_KEY:
+        logger.warning('GEMINI_API_KEY not configured, skipping AI evaluation')
         return
 
+    from google import genai
+    client = genai.Client(api_key=settings.GEMINI_API_KEY)
+
     submissions = assessment.submissions.select_related('prompt').all()
-    client = anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
 
     for submission in submissions:
         if submission.ai_analysis:
             continue  # Already evaluated
 
+        is_video = getattr(submission, 'is_video', False)
+        media_type = 'video' if is_video else 'photo'
+
         prompt_text = submission.prompt.ai_evaluation_prompt or (
-            f'Evaluate this photo of "{submission.prompt.name}" at a retail store. '
+            f'Evaluate this {media_type} of "{submission.prompt.name}" at a retail store. '
             f'Is it in good, fair, or poor condition?'
         )
 
         try:
-            # Read the image
-            image_bytes = submission.image.read()
+            file_bytes = submission.image.read()
             submission.image.seek(0)
-            image_b64 = base64.standard_b64encode(image_bytes).decode('utf-8')
 
-            full_prompt = f"""{prompt_text}
+            if is_video:
+                # Upload video via Gemini Files API for processing
+                import tempfile
+                import os
+                import time as time_mod
+
+                content_type = 'video/mp4'
+                ext = os.path.splitext(submission.image.name)[1] or '.mp4'
+                with tempfile.NamedTemporaryFile(suffix=ext, delete=False) as tmp:
+                    tmp.write(file_bytes)
+                    tmp_path = tmp.name
+                try:
+                    uploaded_file = client.files.upload(file=tmp_path)
+                    # Wait for video processing to complete
+                    for _ in range(60):
+                        status_check = client.files.get(name=uploaded_file.name)
+                        if status_check.state.name == 'ACTIVE':
+                            break
+                        time_mod.sleep(2)
+                    media_part = uploaded_file
+                finally:
+                    os.unlink(tmp_path)
+            else:
+                # Read and downsample image to 768px for cost efficiency
+                img = Image.open(io.BytesIO(file_bytes))
+                max_width = 768
+                if img.width > max_width:
+                    ratio = max_width / img.width
+                    img = img.resize((max_width, int(img.height * ratio)), Image.LANCZOS)
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                buf = io.BytesIO()
+                img.save(buf, format='JPEG', quality=85)
+                jpeg_bytes = buf.getvalue()
+                media_part = genai.types.Part.from_bytes(data=jpeg_bytes, mime_type='image/jpeg')
+
+            video_context = (
+                '\nThis is a video walkthrough. Analyze the entire video for setup, organization, '
+                'display quality, signage, cleanliness, and overall condition of the area shown.'
+            ) if is_video else ''
+
+            full_prompt = f"""{prompt_text}{video_context}
 
 Store: {assessment.store.name}
 Area: {submission.prompt.name}
 {f'Manager notes: {submission.caption}' if submission.caption else ''}
 
-Respond in this format:
-RATING: [GOOD or FAIR or POOR]
-[2-3 sentence analysis of what you observe.]"""
+Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact format:
+{{
+  "rating": "GOOD" or "FAIR" or "POOR",
+  "summary": "2-3 sentence overall assessment of what you observe. Be specific about products and conditions visible.",
+  "findings": [
+    "Specific observation about what you see (e.g. 'Products are well-faced and pulled forward on the top shelf')",
+    "Another specific finding"
+  ],
+  "action_items": [
+    {{"priority": "HIGH" or "MEDIUM" or "LOW", "action": "Specific corrective action needed"}},
+    {{"priority": "HIGH" or "MEDIUM" or "LOW", "action": "Another action"}}
+  ]
+}}
 
-            message = client.messages.create(
-                model='claude-sonnet-4-5-20250929',
-                max_tokens=300,
-                messages=[{
-                    'role': 'user',
-                    'content': [
-                        {
-                            'type': 'image',
-                            'source': {
-                                'type': 'base64',
-                                'media_type': 'image/jpeg',
-                                'data': image_b64,
-                            },
-                        },
-                        {'type': 'text', 'text': full_prompt},
-                    ],
-                }],
+Be specific about what you actually see. Reference actual products, shelf positions, and conditions visible in the {media_type}."""
+
+            response = client.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=[
+                    media_part,
+                    full_prompt,
+                ],
             )
 
-            raw_text = message.content[0].text
-            submission.ai_analysis = raw_text
+            raw_text = response.text.strip()
 
-            # Parse rating
-            rating_match = re.match(r'RATING:\s*(GOOD|FAIR|POOR)', raw_text, re.IGNORECASE)
-            if rating_match:
-                submission.ai_rating = rating_match.group(1).lower()
-                submission.ai_analysis = re.sub(
-                    r'^RATING:\s*(GOOD|FAIR|POOR)\s*\n?', '', raw_text, flags=re.IGNORECASE,
-                ).strip()
+            # Parse structured JSON response
+            import json
+            # Strip markdown code fences if present
+            cleaned = raw_text
+            if cleaned.startswith('```'):
+                cleaned = cleaned.split('\n', 1)[1].rsplit('```', 1)[0].strip()
+
+            try:
+                parsed = json.loads(cleaned)
+                submission.ai_rating = parsed.get('rating', '').lower()
+                if submission.ai_rating not in ('good', 'fair', 'poor'):
+                    submission.ai_rating = ''
+                # Store full JSON as ai_analysis for frontend rendering
+                submission.ai_analysis = json.dumps(parsed)
+            except json.JSONDecodeError:
+                logger.warning(f'Could not parse JSON from AI for submission {submission.id}, using raw text')
+                submission.ai_analysis = raw_text
+                # Try to extract rating from raw text
+                rating_match = re.match(r'.*?"rating"\s*:\s*"(GOOD|FAIR|POOR)"', raw_text, re.IGNORECASE | re.DOTALL)
+                if rating_match:
+                    submission.ai_rating = rating_match.group(1).lower()
 
             submission.save(update_fields=['ai_analysis', 'ai_rating'])
             logger.info(f'AI evaluation complete for submission {submission.id}')
@@ -506,6 +589,14 @@ RATING: [GOOD or FAIR or POOR]
             logger.error(f'AI evaluation error for submission {submission.id}: {e}')
 
     logger.info(f'Assessment {assessment_id}: AI evaluation complete for {submissions.count()} submissions')
+
+    # Send review notification email
+    try:
+        from .services import send_assessment_review_notification
+        assessment.refresh_from_db()
+        send_assessment_review_notification(assessment)
+    except Exception as e:
+        logger.error(f'Failed to send assessment review notification for {assessment_id}: {e}')
 
 
 # ==================== Feature 4: SOP Document Processing ====================

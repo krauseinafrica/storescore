@@ -10,6 +10,7 @@ import {
   getOrgSettings,
   analyzePhoto,
   startWalk,
+  deleteWalk,
 } from '../../api/walks';
 import type {
   Walk,
@@ -137,6 +138,13 @@ export default function ConductWalk() {
     'pending' | 'capturing' | 'verified' | 'too_far' | 'no_store_coords' | 'denied' | 'error'
   >('pending');
   const [locationDistance, setLocationDistance] = useState<number | null>(null);
+
+  // Reference image expansion state
+  const [expandedRefs, setExpandedRefs] = useState<Set<string>>(new Set());
+
+  // Cancel/delete confirmation
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelDeleting, setCancelDeleting] = useState(false);
 
   // Caption modal state
   const [captionModalPhoto, setCaptionModalPhoto] = useState<{
@@ -442,7 +450,8 @@ export default function ConductWalk() {
         captionModalPhoto.file,
         crit?.name,
         sec?.name,
-        captionText.trim() || undefined
+        captionText.trim() || undefined,
+        captionModalPhoto.criterionId || undefined
       );
       setCaptionText(result.analysis);
 
@@ -813,7 +822,26 @@ export default function ConductWalk() {
               Section {currentSection + 1} of {totalSections}
             </p>
           </div>
-          <div className="w-5" /> {/* Spacer for centering */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={async () => {
+                await saveCurrentSection();
+                navigate('/evaluations');
+              }}
+              className="px-2.5 py-1 text-xs font-medium text-gray-500 hover:text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              Exit
+            </button>
+            <button
+              onClick={() => setShowCancelConfirm(true)}
+              className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+              title="Discard evaluation"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Progress bar */}
@@ -1036,6 +1064,46 @@ export default function ConductWalk() {
                           {link.sop_title}
                         </span>
                       ))}
+                    </div>
+                  )}
+
+                  {/* Reference image badge */}
+                  {criterion.reference_images && criterion.reference_images.length > 0 && (
+                    <div className="mb-2">
+                      <button
+                        onClick={() => setExpandedRefs((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(criterion.id)) next.delete(criterion.id);
+                          else next.add(criterion.id);
+                          return next;
+                        })}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200 hover:bg-emerald-100 transition-colors"
+                      >
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        Reference photo
+                        <svg className={`w-3 h-3 transition-transform ${expandedRefs.has(criterion.id) ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                        </svg>
+                      </button>
+                      {expandedRefs.has(criterion.id) && (
+                        <div className="mt-2 flex gap-3 overflow-x-auto pb-1">
+                          {criterion.reference_images.map((ref) => (
+                            <div key={ref.id} className="flex-shrink-0 w-40">
+                              <img
+                                src={ref.image}
+                                alt="Ideal reference"
+                                className="w-40 h-28 object-cover rounded-lg ring-1 ring-emerald-200"
+                              />
+                              <p className="text-[10px] text-emerald-700 font-medium mt-1">Ideal (5/5)</p>
+                              {ref.description && (
+                                <p className="text-[10px] text-gray-500 mt-0.5 line-clamp-2">{ref.description}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -1467,6 +1535,54 @@ export default function ConductWalk() {
           )}
         </button>
       </div>
+
+      {/* Cancel/Delete confirmation modal */}
+      {showCancelConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowCancelConfirm(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-5">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex-shrink-0 w-10 h-10 rounded-full bg-red-100 flex items-center justify-center">
+                  <svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-gray-900">Discard Evaluation?</h3>
+                  <p className="text-sm text-gray-500 mt-0.5">This cannot be undone.</p>
+                </div>
+              </div>
+              <p className="text-sm text-gray-600">
+                This will permanently delete this evaluation and all scores, notes, and photos associated with it.
+              </p>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+              <button onClick={() => setShowCancelConfirm(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">
+                Keep Working
+              </button>
+              <button
+                onClick={async () => {
+                  if (!walkId) return;
+                  setCancelDeleting(true);
+                  try {
+                    await deleteWalk(orgId, walkId);
+                    navigate('/evaluations');
+                  } catch {
+                    setError('Failed to delete evaluation.');
+                    setShowCancelConfirm(false);
+                  } finally {
+                    setCancelDeleting(false);
+                  }
+                }}
+                disabled={cancelDeleting}
+                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-red-700 disabled:opacity-50 transition-colors"
+              >
+                {cancelDeleting ? 'Deleting...' : 'Discard'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

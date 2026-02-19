@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api/client';
+import SEO from '../../components/SEO';
 
 interface FormData {
   first_name: string;
@@ -167,6 +168,11 @@ export default function RequestDemo() {
 
   return (
     <div>
+      <SEO
+        title="Request a Demo | StoreScore — Retail Store Audit Software"
+        description="Schedule a personalized demo of StoreScore. See how multi-location retailers standardize store inspections, improve quality scores, and drive operational excellence."
+        path="/request-demo"
+      />
       <section className="bg-gradient-to-b from-gray-50 to-white py-16 sm:py-20">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 lg:gap-16 items-start">

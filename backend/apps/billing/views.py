@@ -245,8 +245,11 @@ class UpdateStoreCountView(APIView):
                         quantity=new_count,
                     )
 
-                # Apply or remove volume discount coupon
-                coupon_id = _get_stripe_coupon_id(new_discount)
+                # Promo discount overrides volume discount for Stripe coupon
+                if subscription.promo_discount_percent > 0:
+                    coupon_id = _get_or_create_promo_coupon(subscription.promo_discount_percent)
+                else:
+                    coupon_id = _get_stripe_coupon_id(new_discount)
                 stripe.Subscription.modify(
                     subscription.stripe_subscription_id,
                     coupon=coupon_id or '',
@@ -265,9 +268,29 @@ VOLUME_COUPON_MAP = {
     5: 'VOLUME_3',
     10: 'VOLUME_5',
     15: 'VOLUME_10',
+    20: 'VOLUME_25',
 }
 
 
 def _get_stripe_coupon_id(discount_percent):
     """Map a volume discount percentage to the Stripe coupon ID."""
     return VOLUME_COUPON_MAP.get(discount_percent)
+
+
+def _get_or_create_promo_coupon(percent):
+    """Get or create a Stripe coupon for a promotional discount percentage."""
+    import stripe
+    from django.conf import settings as django_settings
+    stripe.api_key = django_settings.STRIPE_SECRET_KEY
+
+    coupon_id = f'PROMO_{percent}'
+    try:
+        stripe.Coupon.retrieve(coupon_id)
+    except stripe.error.InvalidRequestError:
+        stripe.Coupon.create(
+            id=coupon_id,
+            percent_off=percent,
+            duration='forever',
+            name=f'Promotional Discount ({percent}%)',
+        )
+    return coupon_id

@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Outlet, useNavigate } from 'react-router-dom';
+import { Outlet, useNavigate, useLocation, Link } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import TrialBanner from './TrialBanner';
+import OnboardingChecklist from './OnboardingChecklist';
 
 function MasqueradeBar() {
   const [masqName, setMasqName] = useState<string | null>(null);
@@ -38,6 +40,35 @@ function MasqueradeBar() {
   );
 }
 
+function SetupReturnButton() {
+  const location = useLocation();
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    if (location.pathname === '/getting-started') {
+      sessionStorage.removeItem('from_getting_started');
+      setShow(false);
+    } else {
+      setShow(sessionStorage.getItem('from_getting_started') === '1');
+    }
+  }, [location.pathname]);
+
+  if (!show) return null;
+
+  return (
+    <Link
+      to="/getting-started"
+      onClick={() => sessionStorage.removeItem('from_getting_started')}
+      className="fixed top-3 left-1/2 -translate-x-1/2 z-30 hidden lg:inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary-600 text-white text-xs font-medium rounded-full shadow-lg hover:bg-primary-700 transition-colors"
+    >
+      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+      </svg>
+      Back to Setup
+    </Link>
+  );
+}
+
 export default function Layout() {
   const [mobileOpen, setMobileOpen] = useState(false);
 
@@ -47,6 +78,8 @@ export default function Layout() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        {/* Trial countdown banner */}
+        <TrialBanner />
         {/* Masquerade indicator */}
         <MasqueradeBar />
 
@@ -75,6 +108,12 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Floating onboarding checklist */}
+      <OnboardingChecklist />
+
+      {/* Return to setup guide button */}
+      <SetupReturnButton />
     </div>
   );
 }

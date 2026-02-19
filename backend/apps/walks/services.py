@@ -930,3 +930,524 @@ def send_overdue_action_items_email(email, items):
 </div></div></body></html>'''
 
     _send_simple_email(email, subject, html)
+
+
+# ==================== Feature: Assessment Review Notification ====================
+
+
+def send_assessment_review_notification(assessment):
+    """
+    After AI analysis completes on a submitted assessment, notify the appropriate
+    reviewer(s) via email.
+
+    Logic:
+    - If admin/regional_manager/owner submitted → notify store manager(s) for the store
+      (they need to acknowledge/review the assessment findings)
+    - If store_manager or lower submitted → notify admin(s) and regional manager(s)
+      (escalate up for review)
+    """
+    from apps.accounts.models import Membership, StoreAssignment
+
+    org = assessment.store.organization
+    submitter = assessment.submitted_by
+
+    # Find submitter's role
+    submitter_membership = Membership.objects.filter(
+        user=submitter, organization=org,
+    ).first()
+
+    submitter_role = submitter_membership.role if submitter_membership else 'member'
+
+    reviewer_emails = set()
+
+    management_roles = {'owner', 'admin', 'regional_manager'}
+    if submitter_role in management_roles:
+        # Admin/regional manager submitted → notify store manager(s) to acknowledge
+        store_assignments = StoreAssignment.objects.filter(
+            store=assessment.store,
+            membership__organization=org,
+            membership__role__in=['store_manager', 'manager'],
+        ).select_related('membership__user')
+        reviewer_emails.update(sa.membership.user.email for sa in store_assignments)
+
+        # If no store managers found, notify other admins as fallback
+        if not reviewer_emails:
+            fallback = Membership.objects.filter(
+                organization=org,
+                role__in=['owner', 'admin'],
+            ).exclude(user=submitter).select_related('user')
+            reviewer_emails.update(m.user.email for m in fallback)
+    else:
+        # Staff/store manager submitted → notify admins + regional managers
+        admins = Membership.objects.filter(
+            organization=org,
+            role__in=['owner', 'admin'],
+        ).select_related('user')
+        reviewer_emails.update(m.user.email for m in admins)
+
+        # Regional managers for this store's region
+        if assessment.store.region:
+            from apps.accounts.models import RegionAssignment
+            region_assignments = RegionAssignment.objects.filter(
+                region=assessment.store.region,
+                membership__organization=org,
+                membership__role='regional_manager',
+            ).select_related('membership__user')
+            reviewer_emails.update(ra.membership.user.email for ra in region_assignments)
+
+    if not reviewer_emails:
+        logger.info(f'No reviewers found for assessment {assessment.id}')
+        return
+
+    # Build AI summary for the email
+    ai_summaries = []
+    for sub in assessment.submissions.select_related('prompt').all():
+        if sub.ai_analysis:
+            import json
+            try:
+                parsed = json.loads(sub.ai_analysis)
+                summary_text = parsed.get('summary', sub.ai_analysis)
+                rating = parsed.get('rating', sub.ai_rating or '').upper()
+            except (json.JSONDecodeError, AttributeError):
+                summary_text = sub.ai_analysis
+                rating = (sub.ai_rating or '').upper()
+
+            ai_summaries.append({
+                'prompt_name': sub.prompt.name,
+                'ai_rating': rating,
+                'self_rating': (sub.self_rating or '').upper(),
+                'summary': summary_text,
+            })
+
+    rating_colors = {
+        'GOOD': '#16a34a',
+        'FAIR': '#d97706',
+        'POOR': '#dc2626',
+    }
+
+    findings_html = ''
+    for finding in ai_summaries:
+        ai_color = rating_colors.get(finding['ai_rating'], '#6b7280')
+        self_color = rating_colors.get(finding['self_rating'], '#6b7280')
+        mismatch = ''
+        if finding['self_rating'] and finding['ai_rating'] and finding['self_rating'] != finding['ai_rating']:
+            mismatch = '<span style="color:#d97706;font-size:11px;font-weight:600;margin-left:8px;">RATING MISMATCH</span>'
+        findings_html += f'''
+        <div style="margin-bottom:16px;padding:12px;background:#f9fafb;border-radius:8px;">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                <strong style="font-size:13px;color:#111827;">{finding['prompt_name']}</strong>
+                {f'<span style="font-size:11px;font-weight:600;color:{self_color};">Self: {finding["self_rating"]}</span>' if finding['self_rating'] else ''}
+                <span style="font-size:11px;font-weight:600;color:{ai_color};">AI: {finding['ai_rating']}</span>
+                {mismatch}
+            </div>
+            <p style="margin:0;font-size:13px;color:#374151;line-height:1.5;">{finding['summary']}</p>
+        </div>'''
+
+    store_name = assessment.store.name
+    submitter_name = submitter.full_name
+    template_name = assessment.template.name if assessment.template else 'Assessment'
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#D40029;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <h1 style="color:white;margin:0;font-size:22px;">Assessment Ready for Review</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name} — {template_name}</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        <strong>{submitter_name}</strong> submitted a self-assessment for <strong>{store_name}</strong>.
+        AI analysis is complete and ready for your review.
+    </p>
+    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;">AI Findings</h2>
+    {findings_html}
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/evaluations?assessment={assessment.id}#assessments"
+           style="display:inline-block;padding:12px 32px;background:#D40029;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            Review Assessment
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Assessment Review: {store_name} — {template_name} (by {submitter_name})'
+    _send_simple_email(list(reviewer_emails), subject, html)
+    logger.info(f'Assessment review notification sent to {len(reviewer_emails)} reviewers for assessment {assessment.id}')
+
+
+def send_action_items_notification(assessment, action_items, assigned_to_user):
+    """
+    Send email to the assigned store manager when action items are created
+    from an assessment. Lists each action item with priority and due date.
+    """
+    if not assigned_to_user or not assigned_to_user.email:
+        logger.info(f'No assignee email for action items on assessment {assessment.id}')
+        return
+
+    store_name = assessment.store.name
+    template_name = assessment.template.name if assessment.template else 'Assessment'
+    assignee_name = assigned_to_user.first_name or assigned_to_user.full_name
+
+    priority_colors = {
+        'critical': '#dc2626',
+        'high': '#dc2626',
+        'medium': '#d97706',
+        'low': '#6b7280',
+    }
+
+    items_html = ''
+    for item in action_items:
+        color = priority_colors.get(item['priority'], '#6b7280')
+        items_html += f'''
+        <div style="padding:12px;margin-bottom:8px;background:#f9fafb;border-radius:8px;border-left:3px solid {color};">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:{color};">{item['priority']}</span>
+                <span style="font-size:11px;color:#6b7280;">Due: {item['due_date']}</span>
+            </div>
+            <p style="margin:0;font-size:13px;color:#374151;line-height:1.5;">{item['description']}</p>
+        </div>'''
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#D40029;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <h1 style="color:white;margin:0;font-size:22px;">Action Items Assigned</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name} — {template_name}</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        Hi {assignee_name}, <strong>{len(action_items)} action item(s)</strong> have been assigned to you
+        based on a recent assessment at <strong>{store_name}</strong>.
+    </p>
+    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;">Your Action Items</h2>
+    {items_html}
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/follow-ups#action-items"
+           style="display:inline-block;padding:12px 32px;background:#D40029;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            View Action Items
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Action Items: {store_name} — {len(action_items)} item(s) assigned to you'
+    _send_simple_email([assigned_to_user.email], subject, html)
+    logger.info(f'Action items notification sent to {assigned_to_user.email} for assessment {assessment.id}')
+
+
+def send_assessment_congratulations(assessment, reviewer_emails):
+    """
+    When an assessment is reviewed and has no action items (good result),
+    send a congratulatory email to the store team.
+    """
+    if not reviewer_emails:
+        return
+
+    store_name = assessment.store.name
+    template_name = assessment.template.name if assessment.template else 'Assessment'
+
+    # Gather AI ratings
+    ratings_html = ''
+    for sub in assessment.submissions.select_related('prompt').all():
+        if sub.ai_rating:
+            rating = sub.ai_rating.upper()
+            rating_colors = {'GOOD': '#16a34a', 'FAIR': '#d97706', 'POOR': '#dc2626'}
+            color = rating_colors.get(rating, '#6b7280')
+            ratings_html += f'''
+            <div style="display:inline-block;margin:4px;padding:6px 12px;background:#f0fdf4;border-radius:6px;">
+                <span style="font-size:12px;color:#374151;">{sub.prompt.name}:</span>
+                <span style="font-size:12px;font-weight:700;color:{color};margin-left:4px;">{rating}</span>
+            </div>'''
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#16a34a;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <div style="font-size:48px;margin-bottom:8px;">&#127881;</div>
+    <h1 style="color:white;margin:0;font-size:22px;">Great Job!</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name} — {template_name}</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        The assessment for <strong>{store_name}</strong> has been reviewed and
+        <strong style="color:#16a34a;">no action items were required</strong>. Keep up the excellent work!
+    </p>
+    {f'<div style="margin-top:12px;">{ratings_html}</div>' if ratings_html else ''}
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/evaluations?assessment={assessment.id}#assessments"
+           style="display:inline-block;padding:12px 32px;background:#16a34a;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            View Assessment
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Assessment Results: {store_name} — Great Job!'
+    _send_simple_email(list(reviewer_emails), subject, html)
+    logger.info(f'Assessment congratulations sent for assessment {assessment.id}')
+
+
+def send_action_item_completion_notification(action_item, photo, resolved_by_user):
+    """
+    When an action item is resolved with a completion photo, email the
+    regional manager (and admins) with the photo embedded for sign-off.
+    No AI analysis on the completion photo.
+    """
+    from apps.accounts.models import Membership
+
+    org = action_item.organization
+    store = action_item.store or (action_item.walk.store if action_item.walk else None)
+    if not store:
+        logger.info(f'No store for action item {action_item.id}, skipping completion notification')
+        return
+
+    # Find regional managers + admins to notify
+    reviewer_emails = set()
+
+    # Regional managers for this store's region
+    if store.region:
+        from apps.accounts.models import RegionAssignment
+        region_assignments = RegionAssignment.objects.filter(
+            region=store.region,
+            membership__organization=org,
+            membership__role='regional_manager',
+        ).select_related('membership__user')
+        reviewer_emails.update(ra.membership.user.email for ra in region_assignments)
+
+    # Always include admins/owners
+    admins = Membership.objects.filter(
+        organization=org,
+        role__in=['owner', 'admin'],
+    ).select_related('user')
+    reviewer_emails.update(m.user.email for m in admins)
+
+    # Don't email the person who resolved it
+    reviewer_emails.discard(resolved_by_user.email)
+
+    if not reviewer_emails:
+        logger.info(f'No reviewers for action item completion {action_item.id}')
+        return
+
+    store_name = store.name
+    resolver_name = resolved_by_user.full_name
+    photo_url = f'https://storescore.app{photo.image.url}' if photo.image else ''
+
+    priority_colors = {
+        'critical': '#dc2626',
+        'high': '#dc2626',
+        'medium': '#d97706',
+        'low': '#6b7280',
+    }
+    priority_color = priority_colors.get(action_item.priority, '#6b7280')
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#2563eb;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <h1 style="color:white;margin:0;font-size:22px;">Action Item Completed</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name} — Review Required</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        <strong>{resolver_name}</strong> has completed an action item at <strong>{store_name}</strong>
+        and uploaded a completion photo for your review.
+    </p>
+
+    <div style="padding:12px;margin-bottom:16px;background:#f9fafb;border-radius:8px;border-left:3px solid {priority_color};">
+        <div style="margin-bottom:4px;">
+            <span style="font-size:11px;font-weight:700;text-transform:uppercase;color:{priority_color};">{action_item.priority}</span>
+        </div>
+        <p style="margin:0;font-size:13px;color:#374151;line-height:1.5;">{action_item.description}</p>
+    </div>
+
+    <h2 style="margin:0 0 12px;font-size:15px;color:#111827;">Completion Photo</h2>
+    {f'<img src="{photo_url}" alt="Completion photo" style="max-width:100%;border-radius:8px;border:1px solid #e5e7eb;" />' if photo_url else '<p style="color:#6b7280;font-size:13px;">Photo unavailable</p>'}
+
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/action-items/{action_item.id}"
+           style="display:inline-block;padding:12px 32px;background:#2563eb;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            Review & Sign Off
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Action Item Completed: {store_name} — Review photo & sign off'
+    _send_simple_email(list(reviewer_emails), subject, html)
+    logger.info(f'Action item completion notification sent for {action_item.id} to {len(reviewer_emails)} reviewers')
+
+
+def send_action_item_approved_notification(action_item, reviewer_user):
+    """Notify the resolver that their action item resolution was approved."""
+    if not action_item.resolved_by:
+        return
+
+    store = action_item.store or (action_item.walk.store if action_item.walk else None)
+    store_name = store.name if store else 'Unknown Store'
+    reviewer_name = reviewer_user.full_name
+    resolver_email = action_item.resolved_by.email
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#16a34a;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <h1 style="color:white;margin:0;font-size:22px;">Action Item Approved</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name}</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        <strong>{reviewer_name}</strong> has reviewed and approved your resolution.
+    </p>
+    <div style="padding:12px;margin-bottom:16px;background:#f0fdf4;border-radius:8px;border-left:3px solid #16a34a;">
+        <p style="margin:0;font-size:13px;color:#374151;line-height:1.5;">{action_item.description}</p>
+    </div>
+    {f'<p style="margin:0 0 16px;font-size:13px;color:#6b7280;"><em>"{action_item.review_notes}"</em></p>' if action_item.review_notes else ''}
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/action-items/{action_item.id}"
+           style="display:inline-block;padding:12px 32px;background:#16a34a;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            View Details
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Action Item Approved: {store_name}'
+    _send_simple_email([resolver_email], subject, html)
+    logger.info(f'Action item approval notification sent for {action_item.id}')
+
+
+def send_action_item_pushback_notification(action_item, reviewer_user, feedback_notes):
+    """Notify the assigned user that their resolution was pushed back with feedback."""
+    # Notify the person who originally resolved it, or the assigned user
+    target_user = action_item.assigned_to
+    if not target_user:
+        return
+
+    store = action_item.store or (action_item.walk.store if action_item.walk else None)
+    store_name = store.name if store else 'Unknown Store'
+    reviewer_name = reviewer_user.full_name
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#d97706;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <h1 style="color:white;margin:0;font-size:22px;">Action Item Needs Attention</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name} — Additional Work Required</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        <strong>{reviewer_name}</strong> has reviewed your resolution and is requesting additional work.
+    </p>
+    <div style="padding:12px;margin-bottom:16px;background:#f9fafb;border-radius:8px;border-left:3px solid #d97706;">
+        <p style="margin:0 0 8px;font-size:13px;color:#374151;line-height:1.5;">{action_item.description}</p>
+    </div>
+    <div style="padding:12px;margin-bottom:16px;background:#fffbeb;border-radius:8px;">
+        <p style="margin:0 0 4px;font-size:11px;font-weight:700;text-transform:uppercase;color:#92400e;">Reviewer Feedback</p>
+        <p style="margin:0;font-size:13px;color:#374151;line-height:1.5;">{feedback_notes}</p>
+    </div>
+    <p style="margin:0 0 16px;font-size:13px;color:#6b7280;">
+        Please address the feedback and resubmit with an updated photo.
+    </p>
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/action-items/{action_item.id}"
+           style="display:inline-block;padding:12px 32px;background:#d97706;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            Address Feedback
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Action Item Pushed Back: {store_name} — Feedback from {reviewer_name}'
+    _send_simple_email([target_user.email], subject, html)
+    logger.info(f'Action item push-back notification sent for {action_item.id}')
+
+
+def send_pending_review_reminder(action_item):
+    """Remind reviewers about action items stuck in pending_review for 3+ days."""
+    from apps.accounts.models import Membership
+
+    org = action_item.organization
+    store = action_item.store or (action_item.walk.store if action_item.walk else None)
+    if not store:
+        return
+
+    reviewer_emails = set()
+    if store.region:
+        from apps.accounts.models import RegionAssignment
+        region_assignments = RegionAssignment.objects.filter(
+            region=store.region,
+            membership__organization=org,
+            membership__role='regional_manager',
+        ).select_related('membership__user')
+        reviewer_emails.update(ra.membership.user.email for ra in region_assignments)
+
+    admins = Membership.objects.filter(
+        organization=org,
+        role__in=['owner', 'admin'],
+    ).select_related('user')
+    reviewer_emails.update(m.user.email for m in admins)
+
+    if action_item.resolved_by:
+        reviewer_emails.discard(action_item.resolved_by.email)
+
+    if not reviewer_emails:
+        return
+
+    store_name = store.name
+    resolver_name = action_item.resolved_by.full_name if action_item.resolved_by else 'A team member'
+    days_waiting = (timezone.now() - action_item.resolved_at).days if action_item.resolved_at else 0
+
+    html = f'''<!DOCTYPE html>
+<html><head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<div style="max-width:640px;margin:0 auto;padding:24px;">
+<div style="background:#7c3aed;border-radius:12px 12px 0 0;padding:32px 24px;text-align:center;">
+    <h1 style="color:white;margin:0;font-size:22px;">Review Reminder</h1>
+    <p style="color:rgba(255,255,255,0.8);margin:8px 0 0;font-size:14px;">{store_name} — Awaiting your sign-off for {days_waiting} days</p>
+</div>
+<div style="background:white;padding:24px;border-radius:0 0 12px 12px;">
+    <p style="margin:0 0 16px;font-size:14px;color:#374151;">
+        <strong>{resolver_name}</strong> resolved an action item at <strong>{store_name}</strong> and it's been waiting for your review.
+    </p>
+    <div style="padding:12px;margin-bottom:16px;background:#f9fafb;border-radius:8px;border-left:3px solid #7c3aed;">
+        <p style="margin:0;font-size:13px;color:#374151;line-height:1.5;">{action_item.description}</p>
+    </div>
+    <div style="margin-top:24px;text-align:center;">
+        <a href="https://storescore.app/action-items/{action_item.id}"
+           style="display:inline-block;padding:12px 32px;background:#7c3aed;color:white;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">
+            Review Now
+        </a>
+    </div>
+</div>
+<div style="text-align:center;padding:16px;">
+    <p style="margin:0;font-size:11px;color:#9ca3af;">StoreScore — Store Quality Management</p>
+</div>
+</div></body></html>'''
+
+    subject = f'Review Reminder: {store_name} — Action item awaiting sign-off ({days_waiting} days)'
+    _send_simple_email(list(reviewer_emails), subject, html)
+    logger.info(f'Pending review reminder sent for action item {action_item.id}')

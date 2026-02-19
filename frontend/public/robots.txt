@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://storescore.app/sitemap.xml

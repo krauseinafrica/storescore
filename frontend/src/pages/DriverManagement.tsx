@@ -4,7 +4,25 @@ import { useAuth } from '../hooks/useAuth';
 import { getTemplates, getTemplate, getDrivers, createDriver, updateDriver, deleteDriver } from '../api/walks';
 import type { ScoringTemplate, Driver, Criterion, Section } from '../types';
 
+export function DriverManagementContent() {
+  return <DriverManagementInner />;
+}
+
 export default function DriverManagement() {
+  return (
+    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-gray-900">Scoring Drivers</h1>
+        <p className="mt-0.5 text-sm text-gray-500">
+          Manage root cause drivers shown when evaluators score 3 or below. Drivers help identify why areas need improvement.
+        </p>
+      </div>
+      <DriverManagementInner />
+    </div>
+  );
+}
+
+function DriverManagementInner() {
   const orgId = getOrgId();
   const { hasRole } = useAuth();
   const isAdmin = hasRole('admin');
@@ -140,7 +158,7 @@ export default function DriverManagement() {
 
   if (!isAdmin) {
     return (
-      <div className="px-4 sm:px-6 lg:px-8 py-12 text-center">
+      <div className="py-12 text-center">
         <h1 className="text-xl font-bold text-gray-900">Access Denied</h1>
         <p className="text-sm text-gray-500 mt-2">Admin access is required to manage scoring drivers.</p>
       </div>
@@ -149,7 +167,7 @@ export default function DriverManagement() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
+      <div className="flex items-center justify-center min-h-[40vh]">
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
           <p className="text-gray-500 text-sm">Loading...</p>
@@ -159,15 +177,7 @@ export default function DriverManagement() {
   }
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900">Scoring Drivers</h1>
-        <p className="mt-0.5 text-sm text-gray-500">
-          Manage root cause drivers shown when evaluators score 3 or below. Drivers help identify why areas need improvement.
-        </p>
-      </div>
-
+    <>
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3">
           <p className="text-sm text-red-700">{error}</p>
@@ -176,8 +186,8 @@ export default function DriverManagement() {
 
       {/* Template selector (if multiple) */}
       {templates.length > 1 && (
-        <div className="mb-6">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Template</label>
+        <div className="mb-6 bg-white rounded-xl ring-1 ring-gray-900/5 p-4">
+          <label className="block text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Select Template</label>
           <select
             value={selectedTemplate?.id || ''}
             onChange={async (e) => {
@@ -190,7 +200,7 @@ export default function DriverManagement() {
                 setSelectedTemplate(templates.find((t) => t.id === templateId) || null);
               }
             }}
-            className="rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500"
+            className="w-full rounded-lg border border-gray-300 bg-gray-50 px-3.5 py-2.5 text-gray-900 shadow-sm focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:bg-white focus:outline-none text-sm font-medium"
           >
             {templates.map((t) => (
               <option key={t.id} value={t.id}>{t.name}</option>
@@ -418,6 +428,6 @@ export default function DriverManagement() {
             })}
         </div>
       )}
-    </div>
+    </>
   );
 }

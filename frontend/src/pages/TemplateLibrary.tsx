@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../hooks/useAuth';
+import { getOrgId } from '../utils/org';
 import {
   getIndustryTemplates,
   getIndustryTemplate,
@@ -7,6 +8,7 @@ import {
   getOrgProfile,
   getTemplates,
   duplicateTemplate,
+  deleteTemplate,
 } from '../api/walks';
 import type {
   IndustryTemplateListItem,
@@ -30,9 +32,212 @@ function getIndustryColor(industry: string): string {
   return INDUSTRY_COLORS[industry.toLowerCase()] || INDUSTRY_COLORS.general;
 }
 
+// Legacy combined export (used by old standalone page route)
+export function TemplateLibraryContent() {
+  return <TemplateLibraryInner />;
+}
+
+// Separate content exports for the consolidated Templates page
+export function BrowseLibraryContent() {
+  return <BrowseLibraryInner />;
+}
+
+export function YourTemplatesContent() {
+  return <YourTemplatesInner />;
+}
+
 export default function TemplateLibrary() {
-  const { currentMembership, hasRole } = useAuth();
-  const orgId = currentMembership?.organization.id || '';
+  return (
+    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-gray-900">Template Library</h1>
+        <p className="mt-0.5 text-sm text-gray-500">
+          Browse and install evaluation templates, or manage your organization's templates
+        </p>
+      </div>
+      <TemplateLibraryInner />
+    </div>
+  );
+}
+
+// ── Your Templates (standalone content) ──────────────────────────
+
+function YourTemplatesInner() {
+  const { hasRole } = useAuth();
+  const orgId = getOrgId();
+  const isAdmin = hasRole('admin');
+
+  const [orgTemplates, setOrgTemplates] = useState<ScoringTemplate[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [duplicating, setDuplicating] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const loadOrgTemplates = useCallback(async () => {
+    if (!orgId) return;
+    setLoading(true);
+    try {
+      const data = await getTemplates(orgId);
+      setOrgTemplates(data);
+    } catch {
+      setToast({ message: 'Failed to load your templates.', type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  }, [orgId]);
+
+  useEffect(() => {
+    loadOrgTemplates();
+  }, [loadOrgTemplates]);
+
+  const handleDuplicate = async (template: ScoringTemplate) => {
+    if (!orgId || duplicating) return;
+    setDuplicating(template.id);
+    try {
+      const newTemplate = await duplicateTemplate(orgId, template.id);
+      setToast({ message: `Template duplicated as "${newTemplate.name}"`, type: 'success' });
+      loadOrgTemplates();
+    } catch {
+      setToast({ message: 'Failed to duplicate template. Please try again.', type: 'error' });
+    } finally {
+      setDuplicating(null);
+    }
+  };
+
+  const handleDelete = async (templateId: string) => {
+    if (!orgId || deleting) return;
+    setDeleting(true);
+    try {
+      await deleteTemplate(orgId, templateId);
+      setOrgTemplates((prev) => prev.filter((t) => t.id !== templateId));
+      setToast({ message: 'Template deleted.', type: 'success' });
+      setConfirmDeleteId(null);
+    } catch {
+      setToast({ message: 'Failed to delete template. Please try again.', type: 'error' });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {orgTemplates.filter((t) => t.is_active).length === 0 ? (
+        <div className="text-center py-16">
+          <svg className="mx-auto w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+          </svg>
+          <p className="mt-3 text-sm text-gray-500">No templates yet. Install one from the Template Library tab.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {orgTemplates.filter((t) => t.is_active).map((tmpl) => (
+            <div key={tmpl.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4">
+              <div className="flex items-center justify-between gap-4">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-sm font-semibold text-gray-900 truncate">{tmpl.name}</h3>
+                    {tmpl.source_template_name && (
+                      <span className="text-[10px] text-gray-400">Duplicated from {tmpl.source_template_name}</span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-400 mt-0.5">
+                    {tmpl.section_count ?? tmpl.sections?.length ?? 0} sections
+                  </p>
+                </div>
+                {isAdmin && (
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => handleDuplicate(tmpl)}
+                      disabled={duplicating === tmpl.id}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      {duplicating === tmpl.id ? (
+                        <div className="w-3.5 h-3.5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
+                      ) : (
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                      )}
+                      Duplicate
+                    </button>
+                    {confirmDeleteId !== tmpl.id && (
+                      <button
+                        onClick={() => setConfirmDeleteId(tmpl.id)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-red-600 bg-white border border-red-200 rounded-lg hover:bg-red-50 transition-colors"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        Delete
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+              {confirmDeleteId === tmpl.id && (
+                <div className="mt-3 pt-3 border-t border-gray-100">
+                  <p className="text-xs text-gray-500 mb-2">
+                    Existing evaluations will be preserved but this template will no longer be available for new walks.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setConfirmDeleteId(null)}
+                      disabled={deleting}
+                      className="px-3 py-1.5 text-xs font-medium text-gray-600 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={() => handleDelete(tmpl.id)}
+                      disabled={deleting}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                    >
+                      {deleting ? (
+                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : null}
+                      Confirm Delete
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {toast && (
+        <div className="fixed bottom-6 right-6 z-[60] animate-fade-in">
+          <div className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium ${
+            toast.type === 'success' ? 'bg-emerald-600 text-white' : 'bg-red-600 text-white'
+          }`}>
+            <span>{toast.message}</span>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Browse Library (standalone content) ──────────────────────────
+
+function BrowseLibraryInner() {
+  const { hasRole } = useAuth();
+  const orgId = getOrgId();
   const isAdmin = hasRole('admin');
 
   const [templates, setTemplates] = useState<IndustryTemplateListItem[]>([]);
@@ -53,14 +258,6 @@ export default function TemplateLibrary() {
   // Expanded sections in detail view
   const [expandedSections, setExpandedSections] = useState<Set<number>>(new Set());
 
-  // Tab: 'library' or 'my-templates'
-  const [activeTab, setActiveTab] = useState<'library' | 'my-templates'>('library');
-
-  // My Templates state
-  const [orgTemplates, setOrgTemplates] = useState<ScoringTemplate[]>([]);
-  const [orgTemplatesLoading, setOrgTemplatesLoading] = useState(false);
-  const [duplicating, setDuplicating] = useState<string | null>(null);
-
   const loadTemplates = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
@@ -71,7 +268,6 @@ export default function TemplateLibrary() {
         getOrgProfile(orgId).catch(() => null),
       ]);
       setTemplates(data);
-      // Default filter to org's industry if set
       if (profile?.industry && data.some((t) => t.industry === profile.industry)) {
         setActiveIndustry(profile.industry);
       }
@@ -86,40 +282,6 @@ export default function TemplateLibrary() {
     loadTemplates();
   }, [loadTemplates]);
 
-  const loadOrgTemplates = useCallback(async () => {
-    if (!orgId) return;
-    setOrgTemplatesLoading(true);
-    try {
-      const data = await getTemplates(orgId);
-      setOrgTemplates(data);
-    } catch {
-      setToast({ message: 'Failed to load your templates.', type: 'error' });
-    } finally {
-      setOrgTemplatesLoading(false);
-    }
-  }, [orgId]);
-
-  useEffect(() => {
-    if (activeTab === 'my-templates') {
-      loadOrgTemplates();
-    }
-  }, [activeTab, loadOrgTemplates]);
-
-  const handleDuplicate = async (template: ScoringTemplate) => {
-    if (!orgId || duplicating) return;
-    setDuplicating(template.id);
-    try {
-      const newTemplate = await duplicateTemplate(orgId, template.id);
-      setToast({ message: `Template duplicated as "${newTemplate.name}"`, type: 'success' });
-      loadOrgTemplates();
-    } catch {
-      setToast({ message: 'Failed to duplicate template. Please try again.', type: 'error' });
-    } finally {
-      setDuplicating(null);
-    }
-  };
-
-  // Auto-dismiss toast
   useEffect(() => {
     if (!toast) return;
     const timer = setTimeout(() => setToast(null), 4000);
@@ -143,12 +305,8 @@ export default function TemplateLibrary() {
     try {
       const detail = await getIndustryTemplate(orgId, template.id);
       setSelectedTemplate(detail);
-      // Auto-expand all sections
-      if (detail.structure?.sections) {
-        setExpandedSections(new Set(detail.structure.sections.map((_, i) => i)));
-      }
     } catch {
-      setToast({ message: 'Failed to load template details.', type: 'error' });
+      setError('Failed to load template details.');
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
@@ -166,21 +324,13 @@ export default function TemplateLibrary() {
     setInstalling(true);
     try {
       await installIndustryTemplate(orgId, selectedTemplate.id);
-      setToast({ message: `"${selectedTemplate.name}" has been installed successfully!`, type: 'success' });
-      // Update install count locally
-      setTemplates((prev) =>
-        prev.map((t) =>
-          t.id === selectedTemplate.id
-            ? { ...t, install_count: t.install_count + 1 }
-            : t
-        )
-      );
+      setToast({ message: `"${selectedTemplate.name}" installed successfully!`, type: 'success' });
       closeDetail();
+      loadTemplates();
     } catch {
       setToast({ message: 'Failed to install template. Please try again.', type: 'error' });
     } finally {
       setInstalling(false);
-      setConfirmInstall(false);
     }
   };
 
@@ -195,115 +345,20 @@ export default function TemplateLibrary() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="flex flex-col items-center gap-4">
-          <div className="w-10 h-10 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
-          <p className="text-gray-500 text-sm">Loading template library...</p>
-        </div>
+      <div className="flex items-center justify-center py-16">
+        <div className="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24 max-w-6xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900">Template Library</h1>
-        <p className="mt-0.5 text-sm text-gray-500">
-          Browse and install evaluation templates, or manage your organization's templates
-        </p>
-      </div>
-
-      {/* Tabs */}
-      <div className="mb-6 border-b border-gray-200">
-        <nav className="flex gap-6">
-          <button
-            onClick={() => setActiveTab('library')}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'library'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Browse Library
-          </button>
-          <button
-            onClick={() => setActiveTab('my-templates')}
-            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
-              activeTab === 'my-templates'
-                ? 'border-primary-600 text-primary-600'
-                : 'border-transparent text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            Your Templates
-          </button>
-        </nav>
-      </div>
-
-      {/* Error */}
+    <>
       {error && (
         <div className="mb-4 rounded-lg bg-red-50 border border-red-200 p-3">
           <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
 
-      {/* My Templates Tab */}
-      {activeTab === 'my-templates' && (
-        <div>
-          {orgTemplatesLoading ? (
-            <div className="flex items-center justify-center py-16">
-              <div className="w-8 h-8 border-4 border-primary-200 border-t-primary-600 rounded-full animate-spin" />
-            </div>
-          ) : orgTemplates.length === 0 ? (
-            <div className="text-center py-16">
-              <svg className="mx-auto w-12 h-12 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-              </svg>
-              <p className="mt-3 text-sm text-gray-500">No templates yet. Install one from the Library tab.</p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {orgTemplates.map((tmpl) => (
-                <div key={tmpl.id} className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 flex items-center justify-between gap-4">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">{tmpl.name}</h3>
-                      {!tmpl.is_active && (
-                        <span className="text-[10px] font-medium px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">Inactive</span>
-                      )}
-                      {tmpl.source_template_name && (
-                        <span className="text-[10px] text-gray-400">Duplicated from {tmpl.source_template_name}</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-gray-400 mt-0.5">
-                      {tmpl.section_count ?? tmpl.sections?.length ?? 0} sections
-                    </p>
-                  </div>
-                  {isAdmin && (
-                    <button
-                      onClick={() => handleDuplicate(tmpl)}
-                      disabled={duplicating === tmpl.id}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
-                    >
-                      {duplicating === tmpl.id ? (
-                        <div className="w-3.5 h-3.5 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" />
-                      ) : (
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                        </svg>
-                      )}
-                      Duplicate
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Library tab content */}
-      {activeTab === 'library' && <>
       {/* Industry filter pills */}
       <div className="mb-6 flex flex-wrap gap-2">
         {industries.map((industry) => {
@@ -366,7 +421,6 @@ export default function TemplateLibrary() {
               onClick={() => openDetail(template)}
               className="text-left bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md hover:border-gray-300 transition-all group"
             >
-              {/* Top row: name + badges */}
               <div className="flex items-start justify-between gap-3 mb-2">
                 <h3 className="text-sm font-semibold text-gray-900 group-hover:text-primary-600 transition-colors">
                   {template.name}
@@ -390,43 +444,26 @@ export default function TemplateLibrary() {
                 </div>
               </div>
 
-              {/* Description */}
               <p className="text-sm text-gray-500 line-clamp-2 mb-4">
                 {template.description || 'No description available.'}
               </p>
 
-              {/* Stats row */}
               <div className="flex items-center gap-4 text-xs text-gray-400">
                 <span className="flex items-center gap-1">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"
-                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
                   </svg>
                   {template.section_count} sections
                 </span>
                 <span className="flex items-center gap-1">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
-                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
                   </svg>
                   {template.criterion_count} criteria
                 </span>
                 <span className="flex items-center gap-1">
                   <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                    />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                   </svg>
                   {template.install_count} installs
                 </span>
@@ -436,21 +473,16 @@ export default function TemplateLibrary() {
           ))}
         </div>
       )}
-      </>}
 
       {/* Detail Modal */}
       {detailOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto">
-          {/* Backdrop */}
           <div
             className="fixed inset-0 bg-black/50 transition-opacity"
             onClick={closeDetail}
           />
-
-          {/* Modal panel */}
           <div className="flex min-h-full items-center justify-center p-4">
             <div className="relative w-full max-w-3xl bg-white rounded-xl shadow-xl max-h-[90vh] flex flex-col">
-              {/* Modal header */}
               <div className="flex items-start justify-between px-6 py-4 border-b border-gray-100">
                 <div className="flex-1 min-w-0">
                   {detailLoading ? (
@@ -499,7 +531,6 @@ export default function TemplateLibrary() {
                 </button>
               </div>
 
-              {/* Modal body */}
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 {detailLoading ? (
                   <div className="flex items-center justify-center py-12">
@@ -517,42 +548,29 @@ export default function TemplateLibrary() {
                             key={sectionIndex}
                             className="bg-gray-50 rounded-lg ring-1 ring-gray-900/5 overflow-hidden"
                           >
-                            {/* Section header */}
                             <button
                               onClick={() => toggleSection(sectionIndex)}
                               className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-100 transition-colors"
                             >
                               <div className="flex items-center gap-2">
                                 <svg
-                                  className={`w-4 h-4 text-gray-400 transition-transform ${
-                                    isExpanded ? 'rotate-90' : ''
-                                  }`}
+                                  className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
                                   fill="none"
                                   stroke="currentColor"
                                   viewBox="0 0 24 24"
                                 >
-                                  <path
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                    strokeWidth={2}
-                                    d="M9 5l7 7-7 7"
-                                  />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
                                 </svg>
-                                <span className="text-sm font-semibold text-gray-900">
-                                  {section.name}
-                                </span>
+                                <span className="text-sm font-semibold text-gray-900">{section.name}</span>
                                 {section.weight && (
                                   <span className="text-[10px] text-gray-400 bg-white px-1.5 py-0.5 rounded">
                                     Weight: {section.weight}
                                   </span>
                                 )}
                               </div>
-                              <span className="text-xs text-gray-400">
-                                {section.criteria.length} criteria
-                              </span>
+                              <span className="text-xs text-gray-400">{section.criteria.length} criteria</span>
                             </button>
 
-                            {/* Criteria */}
                             {isExpanded && (
                               <div className="border-t border-gray-200/50 divide-y divide-gray-100">
                                 {section.criteria
@@ -561,18 +579,12 @@ export default function TemplateLibrary() {
                                     <div key={criterionIndex} className="px-4 py-3 pl-10">
                                       <div className="flex items-start justify-between gap-3">
                                         <div className="flex-1 min-w-0">
-                                          <p className="text-sm font-medium text-gray-800">
-                                            {criterion.name}
-                                          </p>
+                                          <p className="text-sm font-medium text-gray-800">{criterion.name}</p>
                                           {criterion.description && (
-                                            <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
-                                              {criterion.description}
-                                            </p>
+                                            <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{criterion.description}</p>
                                           )}
                                           {criterion.scoring_guidance && (
-                                            <p className="text-xs text-gray-400 mt-0.5 italic">
-                                              {criterion.scoring_guidance}
-                                            </p>
+                                            <p className="text-xs text-gray-400 mt-0.5 italic">{criterion.scoring_guidance}</p>
                                           )}
                                         </div>
                                         <div className="flex items-center gap-2 flex-shrink-0">
@@ -601,7 +613,6 @@ export default function TemplateLibrary() {
                 )}
               </div>
 
-              {/* Modal footer */}
               {isAdmin && selectedTemplate && (
                 <div className="px-6 py-4 border-t border-gray-100 bg-gray-50/50 rounded-b-xl">
                   {confirmInstall ? (
@@ -640,12 +651,7 @@ export default function TemplateLibrary() {
                         className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
                       >
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            strokeWidth={2}
-                            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
-                          />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                         </svg>
                         Install Template
                       </button>
@@ -658,7 +664,6 @@ export default function TemplateLibrary() {
         </div>
       )}
 
-      {/* Toast notification */}
       {toast && (
         <div className="fixed bottom-6 right-6 z-[60] animate-fade-in">
           <div
@@ -697,6 +702,44 @@ export default function TemplateLibrary() {
           </div>
         </div>
       )}
-    </div>
+    </>
+  );
+}
+
+// ── Legacy combined component (Browse Library + Your Templates with internal tabs) ──
+
+function TemplateLibraryInner() {
+  const [activeTab, setActiveTab] = useState<'library' | 'my-templates'>('library');
+
+  return (
+    <>
+      <div className="mb-6 border-b border-gray-200">
+        <nav className="flex gap-6">
+          <button
+            onClick={() => setActiveTab('library')}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'library'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Browse Library
+          </button>
+          <button
+            onClick={() => setActiveTab('my-templates')}
+            className={`pb-3 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === 'my-templates'
+                ? 'border-primary-600 text-primary-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            Your Templates
+          </button>
+        </nav>
+      </div>
+
+      {activeTab === 'my-templates' && <YourTemplatesInner />}
+      {activeTab === 'library' && <BrowseLibraryInner />}
+    </>
   );
 }

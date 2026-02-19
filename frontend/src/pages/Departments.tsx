@@ -1,13 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { getOrgId } from '../utils/org';
 import {
   getDepartments,
   deleteDepartment,
   getDepartmentTypes,
   installDepartmentType,
   getStores,
+  updateStore,
   createDepartmentWalk,
+  getOrgProfile,
 } from '../api/walks';
 import type { Department, DepartmentType, Store } from '../types';
 
@@ -22,8 +25,8 @@ function getCategoryColor(category: string): string {
 }
 
 export default function Departments() {
-  const { user, currentMembership, hasRole } = useAuth();
-  const orgId = currentMembership?.organization.id || '';
+  const { user, hasRole } = useAuth();
+  const orgId = getOrgId();
   const isAdmin = hasRole('admin');
   const navigate = useNavigate();
 
@@ -39,6 +42,7 @@ export default function Departments() {
   const [departmentTypes, setDepartmentTypes] = useState<DepartmentType[]>([]);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [libraryError, setLibraryError] = useState('');
+  const [activeIndustry, setActiveIndustry] = useState('all');
 
   // Stores state
   const [stores, setStores] = useState<Store[]>([]);
@@ -52,6 +56,11 @@ export default function Departments() {
   const [installing, setInstalling] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+
+  // Manage Stores modal state
+  const [manageStoresDept, setManageStoresDept] = useState<Department | null>(null);
+  const [storeAssignments, setStoreAssignments] = useState<Record<string, boolean>>({});
+  const [savingStores, setSavingStores] = useState(false);
 
   // Toast
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -100,8 +109,14 @@ export default function Departments() {
     setLibraryLoading(true);
     setLibraryError('');
     try {
-      const data = await getDepartmentTypes(orgId);
+      const [data, profile] = await Promise.all([
+        getDepartmentTypes(orgId),
+        getOrgProfile(orgId).catch(() => null),
+      ]);
       setDepartmentTypes(data);
+      if (profile?.industry && data.some((dt) => dt.industry === profile.industry)) {
+        setActiveIndustry(profile.industry);
+      }
     } catch {
       setLibraryError('Failed to load department library. Please try again.');
     } finally {
@@ -153,6 +168,44 @@ export default function Departments() {
     }
   };
 
+  // Open Manage Stores modal
+  const handleOpenManageStores = (dept: Department) => {
+    setManageStoresDept(dept);
+    const assignments: Record<string, boolean> = {};
+    for (const store of stores) {
+      assignments[store.id] = store.department_ids?.includes(dept.id) || false;
+    }
+    setStoreAssignments(assignments);
+  };
+
+  // Save store assignments
+  const handleSaveStoreAssignments = async () => {
+    if (!orgId || !manageStoresDept) return;
+    setSavingStores(true);
+    try {
+      const deptId = manageStoresDept.id;
+      for (const store of stores) {
+        const wasAssigned = store.department_ids?.includes(deptId) || false;
+        const isNowAssigned = storeAssignments[store.id] || false;
+        if (wasAssigned !== isNowAssigned) {
+          const newDeptIds = isNowAssigned
+            ? [...(store.department_ids || []), deptId]
+            : (store.department_ids || []).filter((id) => id !== deptId);
+          await updateStore(orgId, store.id, { department_ids: newDeptIds });
+        }
+      }
+      setToast({ message: `Store assignments updated for "${manageStoresDept.name}"`, type: 'success' });
+      setManageStoresDept(null);
+      // Reload stores and departments to get updated counts
+      loadStores();
+      loadDepartments();
+    } catch {
+      setToast({ message: 'Failed to update store assignments.', type: 'error' });
+    } finally {
+      setSavingStores(false);
+    }
+  };
+
   // Get stores that have a specific department assigned
   const getStoresForDepartment = (deptId: string): Store[] => {
     return stores.filter(
@@ -201,7 +254,7 @@ export default function Departments() {
   }
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24 max-w-6xl mx-auto">
+    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
       {/* Header */}
       <div className="mb-6">
         <h1 className="text-xl font-bold text-gray-900">Department Management</h1>
@@ -316,6 +369,20 @@ export default function Departments() {
 
                   {/* Actions */}
                   <div className="flex items-center gap-2 flex-shrink-0">
+                    {/* Manage Stores button */}
+                    {isAdmin && dept.is_active && (
+                      <button
+                        onClick={() => handleOpenManageStores(dept)}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                      >
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        Manage Stores
+                      </button>
+                    )}
+
                     {/* Start Evaluation button */}
                     {dept.is_active && (
                       <button
@@ -412,8 +479,54 @@ export default function Departments() {
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {departmentTypes.map((dt) => (
+            <>
+              {/* Industry filter pills */}
+              {(() => {
+                const industries = ['all', ...Array.from(new Set(departmentTypes.map((dt) => dt.industry)))];
+                const filteredTypes =
+                  activeIndustry === 'all'
+                    ? departmentTypes
+                    : departmentTypes.filter((dt) => dt.industry === activeIndustry);
+
+                return (
+                  <>
+                    <div className="mb-6 flex flex-wrap gap-2">
+                      {industries.map((industry) => {
+                        const isActive = activeIndustry === industry;
+                        const displayName =
+                          industry === 'all'
+                            ? 'All'
+                            : departmentTypes.find((dt) => dt.industry === industry)?.industry_display || industry;
+                        const count =
+                          industry === 'all'
+                            ? departmentTypes.length
+                            : departmentTypes.filter((dt) => dt.industry === industry).length;
+
+                        return (
+                          <button
+                            key={industry}
+                            onClick={() => setActiveIndustry(industry)}
+                            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                              isActive
+                                ? 'bg-primary-600 text-white shadow-sm'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                            }`}
+                          >
+                            {displayName}
+                            <span
+                              className={`text-xs px-1.5 py-0.5 rounded-full ${
+                                isActive ? 'bg-primary-500 text-white' : 'bg-gray-200 text-gray-500'
+                              }`}
+                            >
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {filteredTypes.map((dt) => (
                 <div
                   key={dt.id}
                   className="bg-white rounded-lg shadow-sm border border-gray-200 p-5 hover:shadow-md hover:border-gray-300 transition-all"
@@ -506,6 +619,10 @@ export default function Departments() {
                 </div>
               ))}
             </div>
+                  </>
+                );
+              })()}
+            </>
           )}
         </div>
       )}
@@ -610,6 +727,103 @@ export default function Departments() {
                     </svg>
                     Start
                   </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================== Manage Stores Modal ==================== */}
+      {manageStoresDept && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={() => !savingStores && setManageStoresDept(null)}
+          />
+          <div className="relative bg-white rounded-xl shadow-xl border border-gray-200 w-full max-w-md mx-4 p-6">
+            <h2 className="text-lg font-semibold text-gray-900 mb-1">
+              Manage Stores
+            </h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Select which stores have <span className="font-medium text-gray-700">{manageStoresDept.name}</span> available for evaluation.
+            </p>
+
+            {stores.filter((s) => s.is_active).length === 0 ? (
+              <p className="text-sm text-gray-500 text-center py-6">No active stores found.</p>
+            ) : (
+              <>
+                {/* Select all / none */}
+                <div className="flex items-center gap-3 mb-3 pb-3 border-b border-gray-100">
+                  <button
+                    onClick={() => {
+                      const all: Record<string, boolean> = {};
+                      stores.filter((s) => s.is_active).forEach((s) => { all[s.id] = true; });
+                      setStoreAssignments((prev) => ({ ...prev, ...all }));
+                    }}
+                    className="text-xs font-medium text-primary-600 hover:text-primary-700"
+                  >
+                    Select all
+                  </button>
+                  <span className="text-gray-300">|</span>
+                  <button
+                    onClick={() => {
+                      const none: Record<string, boolean> = {};
+                      stores.filter((s) => s.is_active).forEach((s) => { none[s.id] = false; });
+                      setStoreAssignments((prev) => ({ ...prev, ...none }));
+                    }}
+                    className="text-xs font-medium text-gray-500 hover:text-gray-700"
+                  >
+                    Select none
+                  </button>
+                  <span className="ml-auto text-xs text-gray-400">
+                    {Object.values(storeAssignments).filter(Boolean).length} selected
+                  </span>
+                </div>
+
+                <div className="space-y-1.5 max-h-60 overflow-y-auto">
+                  {stores.filter((s) => s.is_active).map((store) => (
+                    <label key={store.id} className="flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-gray-50 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={storeAssignments[store.id] || false}
+                        onChange={(e) =>
+                          setStoreAssignments((prev) => ({ ...prev, [store.id]: e.target.checked }))
+                        }
+                        className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <span className="text-sm text-gray-900">{store.name}</span>
+                        {store.store_number && (
+                          <span className="text-xs text-gray-400 ml-1.5">#{store.store_number}</span>
+                        )}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </>
+            )}
+
+            <div className="flex items-center justify-end gap-3 mt-6">
+              <button
+                onClick={() => setManageStoresDept(null)}
+                disabled={savingStores}
+                className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveStoreAssignments}
+                disabled={savingStores}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors shadow-sm disabled:opacity-50"
+              >
+                {savingStores ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Assignments'
                 )}
               </button>
             </div>

@@ -1,7 +1,7 @@
 # StoreScore.app — Product Roadmap
 
 ## Vision
-AI-powered store quality management platform for multi-location retailers, restaurants, and franchise operations. Built initially for Ace Hardware franchises, designed to serve any brand with minimal customization — from hardware stores to QSR chains to grocery.
+AI-powered store quality management platform for multi-location retailers, restaurants, and franchise operations. Industry-agnostic — hardware, QSR, grocery, specialty retail. The platform connects the dots between **store quality → customer experience → sales → staffing**, proving that well-run stores convert more and identifying exactly what it takes to get there. Integrates with existing retail infrastructure (POS, reporting, scheduling) to provide the qualitative "why" behind quantitative data.
 
 ---
 
@@ -207,6 +207,9 @@ AI-powered store quality management platform for multi-location retailers, resta
   - [x] Admin guide (managing team, stores, templates)
 - [x] Contextual help and onboarding lessons
 - [x] Getting Started page with progress tracking
+- [x] Floating onboarding checklist popup (auto-marks: org settings, stores, departments, dept→stores, team, templates, walks)
+- [x] Expanded Quick Start checklist (org settings, departments, apply departments to stores)
+- [x] Onboarding reminder email (Celery daily — 3-7 days after org creation, lists incomplete items)
 - [ ] Franchise onboarding wizard (multi-step: org -> regions -> stores -> team)
 - [ ] Store employee onboarding flow
 - [ ] Training resources linked to low-scoring criteria
@@ -255,6 +258,166 @@ AI-powered store quality management platform for multi-location retailers, resta
 - [x] Frontend: Routes — `/departments`, `/department-eval/:walkId`
 - [x] TypeScript fixes — null-safe template loading in ConductWalk, WalkDetail, WalkReview
 
+## Phase 5.75: Self-Assessments + AI Photo Evaluation (COMPLETE)
+*Photo-based store assessments with AI-powered analysis using Gemini 2.5 Flash*
+
+- [x] Backend: `SelfAssessment`, `SelfAssessmentTemplate`, `AssessmentPrompt`, `AssessmentSubmission` models
+- [x] Backend: Full CRUD API — create, submit, review assessments
+- [x] Backend: Gemini 2.5 Flash integration for photo analysis (768px downsampling)
+- [x] Backend: Structured JSON AI output (rating, summary, findings, action items with priority)
+- [x] Backend: Celery task `process_assessment_submissions` — async AI evaluation after submit
+- [x] Frontend: Assessment list with status tabs (all/pending/submitted/reviewed)
+- [x] Frontend: Assessment detail with photo upload per prompt, self-rating, captions
+- [x] Frontend: URL-based detail routing (`?assessment=<id>#assessments` — survives page refresh)
+- [x] Frontend: AI processing spinner with auto-polling (detects submitted + no AI → polls every 3s)
+- [x] Frontend: Structured AI analysis cards (summary, key findings bullets, prioritized action items)
+- [x] Frontend: Rating mismatch indicator (self-rating vs AI rating)
+- [x] Frontend: Inline edit for self-rating and caption after upload
+- [x] Frontend: Re-upload photo support (replaces existing submission)
+- [x] Frontend: Assessment Templates CRUD tab on Templates page
+- [x] Backend: Safe prompt update serializer (update-or-create, no cascade-delete of submissions)
+- [x] S3 ACL fix: public-read for media files, disabled querystring auth
+- [x] Email notification after AI analysis completes — role-based routing:
+  - Admin/RM submitted → notify store manager(s) to acknowledge
+  - Store manager submitted → notify admins + regional managers for review
+- [x] AI-suggested action items with reviewer approval:
+  - Checkboxes to select which AI suggestions to create
+  - Inline editing of description and priority before approval
+  - Auto-assigns to store manager with priority-based due dates (HIGH=3d, MEDIUM=7d, LOW=14d)
+  - Email notification to assigned store manager with action item details
+- [x] Congratulatory email when assessment has no action items (good result)
+- [x] Delete assessments — orphans linked action items (`assessment_removed` indicator)
+- [x] Upload spinner with progress animation during photo upload
+- [x] Reviewer rating override — admins can adjust AI ratings per submission and add commentary
+  - `reviewer_rating`, `reviewer_notes`, `reviewed_by`, `reviewed_at` on AssessmentSubmission
+  - Per-submission inline override UI with violet styling
+  - Review endpoint (`/review/`) marks assessment as reviewed
+- [x] Action item completion with photo:
+  - "Resolve with Photo" flow — upload completion evidence photo
+  - No AI analysis on completion photos
+  - Email to regional manager + admins with photo embedded for sign-off
+- [x] Floating onboarding checklist popup widget:
+  - Chat-like floating widget (bottom-right) that persists across pages
+  - Auto-marks items as complete based on real data (org settings, stores, departments, team, templates, walks)
+  - Collapsible to pill, dismissable, auto-refreshes on focus
+  - Links to relevant pages for each incomplete item
+  - "View full walkthrough" link to Getting Started page
+- [x] Onboarding reminder email (Celery daily task):
+  - Checks orgs created 3-7 days ago with incomplete setup
+  - Sends checklist email to org admins listing remaining steps
+  - Branded HTML email with progress percentage and "Continue Setup" CTA
+- [x] Video upload support for assessments (MP4/MOV, Gemini Files API for analysis)
+- [x] Upload flow UX fix: select file → preview → fill rating/caption → Save (no premature upload lock)
+- [x] AI-suggested action item checkbox persistence (stay checked with green "CREATED" badge)
+- [x] Auto-dismiss onboarding checklist at 100% completion (admin/owner only)
+- [x] Exit/Discard buttons in ConductWalk
+- [x] Continue/Delete buttons on assessment cards
+- [x] Getting Started page horizontal card layout
+- [x] Back to Setup floating button
+- [ ] Video walkthrough support (Phase 9 dependency)
+
+## Phase 5.75b: Review Sign-Off & Push-Back Flow (COMPLETE)
+*Full action item lifecycle with reviewer approval/rejection*
+
+- [x] ActionItem model: `pending_review` and `approved` statuses added
+- [x] ActionItem model: `reviewed_by`, `reviewed_at`, `review_notes` fields
+- [x] ActionItemEvent model — full lifecycle timeline tracking (created, assigned, status changed, photo uploaded, AI verified, submitted for review, approved, rejected)
+- [x] `resolve-with-photo` now routes to `pending_review` instead of `resolved`
+- [x] `sign-off` endpoint (POST) — approves action items, blocks self-review
+- [x] `push-back` endpoint (POST) — rejects with required feedback notes, resets to `in_progress`
+- [x] Self-review blocking (resolver cannot be their own reviewer)
+- [x] Role-based reviewer access (regional_manager, admin, owner)
+- [x] Email notifications: approval confirmation, push-back with feedback, pending review reminders (Celery daily, 3+ days stale)
+- [x] Frontend: Reviewer section on ActionItemDetail with before/after photo comparison
+- [x] Frontend: Approve/Push-back buttons with notes modal
+- [x] Frontend: Timeline component with color-coded event icons
+- [x] Frontend: Status banners (approved, pending review for non-reviewers)
+- [x] Frontend: Resolution time display
+- [x] Frontend: ActionItems list with `pending_review` and `approved` status tabs + badges
+
+## Phase 5.8: Advanced Reports & Analytics (COMPLETE)
+*Multi-tab reporting with drill-down, action item insights, driver analytics*
+
+- [x] **Tabbed report structure** — 5 tabs with hash-based URL routing
+  - [x] **Overview tab** — KPI cards, score gauge, region bars, trend chart, quick insights
+  - [x] **Store Deep Dive tab** — store selector, scorecard, full score history, section trends, comparison to org average
+  - [x] **Section Analysis tab** — section/criteria performance, consistently low-scoring criteria, cross-store comparison
+  - [x] **Evaluator Insights tab** — consistency patterns, scoring distributions, per-evaluator trends (admin only)
+  - [x] **Action Items & Drivers tab** — resolution rates, common root cause drivers, recurring issues by section/store
+- [x] **Click-to-drill interactions** — store bar clicks drill to Store Deep Dive, section legend clicks drill to Section Analysis
+- [x] **Driver insights** — aggregate driver selections across walks
+  - [x] Top drivers by section (e.g., "Staffing" is the #1 driver for low Shelf Maintenance)
+  - [x] Driver trends over time
+  - [ ] Driver-to-action-item correlation (which drivers generate the most follow-up work?)
+- [x] **Action item analytics** — tie corrective actions back to evaluation data
+  - [x] Open vs resolved action items by store/region
+  - [x] Average resolution time
+  - [ ] Impact measurement: do scores improve after action items are resolved?
+  - [ ] Resolution time display by priority level with SLA color coding
+- [ ] **Notes & observations callouts** — surface notable walk notes/observations in the insights banner
+- [ ] **Template editing** — edit "Your Templates" inline (sections, criteria, point values) with "customized" indicator
+- [x] **N+1 query fix** — SectionBreakdownView pre-aggregates criterion averages in single query
+
+---
+
+## Phase 5.9: Public Site as Digital Pitch Deck (PLANNED)
+*Convert storescore.app into a high-converting sales funnel — brand-agnostic, industry-flexible*
+
+### Core Thesis
+StoreScore connects the dots between **store quality → customer experience → sales performance → staffing efficiency**. The platform answers: "What does it take to run a great store, and how do we prove it with data?" This applies to hardware stores, QSR, grocery, specialty retail — any multi-location operation where physical store conditions impact revenue.
+
+### Strategy: 4-Pillar Messaging
+1. **The Problem** — "Manual Audit Fatigue" and inconsistency across locations. The "black box" of regional management. Every chain knows some stores perform better, but can't pinpoint why.
+2. **The Solution** — Visual-first approach + AI photo analysis as the modern alternative to paper clipboards. Structured evaluations that produce actionable data, not just scores.
+3. **Retail Infrastructure Integration** — StoreScore provides the qualitative "why" behind quantitative data. Integrates with existing POS, reporting, and operations tools (Epicor Eagle, Mango Report, Square, Toast, etc.) to correlate quality scores with sales and staffing.
+4. **ROI Storytelling** — Position store quality as the physical equivalent of "lowering bounce rates." A clean, well-stocked, well-staffed store converts more foot traffic into sales. StoreScore proves it.
+
+### The Quality → Sales → Staffing Triangle
+The ultimate insight StoreScore unlocks:
+- **Quality ↔ Sales**: Do higher-scoring stores generate more revenue per sq ft?
+- **Staffing ↔ Quality**: What's the minimum staff hours/day needed to maintain a target quality score?
+- **Staffing ↔ Sales**: What's the ROI of each additional staff hour in terms of sales lift?
+- This is the "holy grail" metric: **quality score per staff hour per dollar of revenue**
+- Staffing data source TBD — could come from POS (hours logged), scheduling software (Deputy, HotSchedules, 7shifts), or manual entry
+
+### Homepage Overhaul
+- [ ] **Hero section** — Brand-agnostic headline focused on the universal problem. 60-second conviction.
+- [ ] **"How It Works" section** — 3 steps with visuals (Evaluate → Analyze → Improve)
+- [ ] **Industry examples** — Hardware, restaurant/QSR, grocery, specialty retail. Show the platform adapts to any store type.
+- [ ] **Comparison table** — Manual audits vs. StoreScore (time, consistency, AI insights, photo evidence, data correlation)
+- [ ] **Before/After AI view** — Photo of disorganized department → StoreScore AI overlay with action item callout
+- [ ] **Multi-store map visual** — Dashboard mockup showing store pins with green/yellow/red scores ("God-view" for operators)
+- [ ] **Integration logos** — "Works with your existing tools" — POS, reporting, scheduling software logos
+- [ ] **Social proof section** — Testimonials, store count, evaluation count
+
+### Enterprise / Mega-Group Strategy
+- [ ] **`/enterprise` landing page** — Tailored for 10-50+ location operators (any industry)
+  - Focus on: benchmarking, regional manager efficiency, API integrations, quality-to-sales correlation
+  - "Operations at scale" language — VP of Ops / Director of Store Standards pain points
+  - ROI calculator (estimate time saved, consistency improvement, revenue lift)
+- [ ] **Dynamic form logic** — Enterprise tier "Get Started" triggers a short lead form (# locations, industry, current tools, main pain point)
+- [ ] **In-app lead ticketing** — Form submissions create "Lead Tickets" in platform admin, respond via templated email
+- [ ] **Automated scheduling** — Calendly/SavvyCal embed for "Platform Walkthrough" booking
+- [ ] **Enterprise one-pager** — Downloadable PDF for decision-makers
+
+### Audience Segmentation
+| Segment | Entry Point | Key Message | CTA |
+|---------|------------|-------------|-----|
+| Single-location owner/GM | Homepage / Pricing | "See your store clearly" | Free trial signup |
+| Multi-location owner (3-10) | Homepage / Features | "Compare locations instantly" | Start free, upgrade |
+| Regional chain / franchise group (10-50+) | `/enterprise` | "Regional visibility at scale" | Book a walkthrough |
+| Franchise corporate (HQ-level) | Direct outreach | "The quality layer your franchisees need" | Partnership meeting |
+
+### Industry-Specific Angles (for future vertical landing pages)
+| Industry | Key Hook | Integration Targets |
+|----------|----------|-------------------|
+| Hardware (Ace, True Value, Do It Best) | Department readiness, vendor compliance | Epicor Eagle, Mango Report |
+| QSR / Restaurant | Food safety, cleanliness, speed of service | Toast, Square, 7shifts |
+| Grocery | Shelf stocking, freshness, department rotation | POS systems, scheduling tools |
+| Specialty Retail | Visual merchandising, brand standards | Shopify POS, Lightspeed |
+
+---
+
 ## Phase 6: White-Label + Multi-Brand (DEFERRED — tied to marketing plan)
 *Prepare for other brands beyond Ace*
 
@@ -267,31 +430,47 @@ AI-powered store quality management platform for multi-location retailers, resta
 - [ ] Onboarding flow per brand
 
 ## Phase 7: Advanced AI Features
-*Deeper AI integration*
+*Deeper AI integration — dual-model strategy: Claude for text, Gemini for vision*
 
 - [x] AI-powered action item generation from walk scores
 - [x] Photo analysis (Claude vision — auto-detect issues from walk photos)
 - [x] SOP document analysis and criterion linking
+- [x] Gemini 2.5 Flash integration for assessment photo analysis (structured JSON output)
+- [x] AI model comparison tooling (management commands: `compare_ai_vision`, `deep_compare_vision`)
+- [x] Dual-model strategy: Claude for walk summaries/email; Gemini 2.5 Flash for photo/video analysis
+- [x] Photo downsampling pipeline (768px default, LANCZOS, JPEG quality 85)
 - [ ] Predictive scoring (flag stores likely to decline)
 - [ ] Natural language walk queries ("Show me all stores with declining Safety scores")
 - [ ] AI coaching suggestions for store managers
 - [ ] Automated follow-up reminders based on AI recommendations
+- [ ] Price tag / signage reading mode (1024px for fine text)
 
-## Phase 8: Store Gamification (NEXT UP)
+## Phase 8: Store Gamification (LARGELY COMPLETE)
 *Competition, achievements, and engagement features*
 
-- [ ] Leaderboards — auto-generated rankings by walk scores, improvement rate, streaks
-  - [ ] Scoped by org, region, or platform-wide
-  - [ ] Configurable period (weekly, monthly, quarterly, all-time)
-- [ ] Challenges — admin-created time-bound competitions
-  - [ ] e.g., "Best Curb Appeal — March 2026"
-  - [ ] Metric-based scoring, start/end dates, prizes text
-- [ ] Achievements / Badges — "Perfect Score", "10-Walk Streak", "Most Improved"
-  - [ ] Bronze/silver/gold tiers
-  - [ ] Criteria rules engine (JSON-based)
-- [ ] CompetitionSettings per org — configurable visibility by role
-  - [ ] Default: management roles only (owner, admin, regional_manager)
-- [ ] Dashboard widgets: "Your Rank", "Active Challenges", "Recent Achievements"
+- [x] Leaderboards — auto-generated rankings by walk scores, improvement rate, consistency
+  - [x] Scoped by org, region, or platform-wide
+  - [x] 4 leaderboard types: avg_score, walk_count, most_improved, consistency
+  - [ ] Streaks leaderboard (consecutive weeks with walks)
+  - [ ] Periodic leaderboard caching (Celery task, every 6 hours)
+- [x] Challenges — admin-created time-bound competitions
+  - [x] Challenge model with types: score_target, most_improved, walk_count, highest_score
+  - [x] ChallengeViewSet with full CRUD and computed standings
+  - [ ] Section-scoped challenges (e.g., "Best Curb Appeal — March 2026")
+  - [ ] Prizes text field
+  - [ ] Challenge finalization emails (Celery daily task)
+- [x] Achievements / Badges — 12 pre-built achievements
+  - [x] Bronze/silver/gold/platinum tiers
+  - [x] 7 criteria types with rules engine
+  - [x] Achievement checking triggered on walk completion
+  - [x] Seed data management command
+  - [ ] Achievement notification emails
+  - [ ] Async achievement checking (move to Celery task)
+- [x] OrgSettings.gamification_enabled toggle
+  - [ ] Role-based visibility control (gamification_visible_roles)
+- [x] Dashboard widgets: Mini Leaderboard, Active Challenge, Recent Badges
+- [x] Frontend: Full `/gamification` page with 3 tabs (Leaderboard, Challenges, Achievements)
+- [x] Plan-gated visibility (Pro/Enterprise via useSubscription + FeatureGate)
 
 ## Phase 9: AI Video Analysis (After Phase 8 + 7)
 *Video-based store walk analysis using Google Gemini — requires Gemini API setup*
@@ -332,11 +511,18 @@ See [VIDEO_AI_ANALYSIS.md](./VIDEO_AI_ANALYSIS.md) for the full technical plan, 
 ## Infrastructure Backlog
 
 - [x] Resend email setup (DNS records + API key)
+- [x] Sentry.io error monitoring integration
+- [x] Sentry cleanup — resolved 8+ stale issues (Feb 2026)
 - [ ] Automated database backups (pg_dump to DO Spaces)
 - [ ] Monitoring / alerting (uptime, container health)
 - [ ] CI/CD pipeline (GitHub Actions -> auto-deploy on push)
 - [ ] Staging environment
-- [ ] Rate limiting on API
+- [ ] Rate limiting on API (CRITICAL — see security audit)
+- [ ] JWT refresh token blacklisting after rotation (CRITICAL — see security audit)
+- [ ] S3 private ACL for uploaded files (HIGH — currently public-read)
+- [ ] HSTS + security headers in Nginx (HIGH)
+- [ ] Docker containers: run as non-root user (HIGH)
+- [ ] Redis authentication (MEDIUM)
 - [ ] Audit logging (who changed what, when)
 - [ ] Server migration plan (when droplet resources get tight)
 - [ ] Offline-first with sync (PWA enhancement)
@@ -348,17 +534,22 @@ See [VIDEO_AI_ANALYSIS.md](./VIDEO_AI_ANALYSIS.md) for the full technical plan, 
 
 | Priority | Phase | Notes |
 |----------|-------|-------|
-| 1 | **Phase 8: Store Gamification** | Leaderboards, challenges, badges |
-| 2 | **Phase 7: Advanced AI** | Predictive scoring, NL queries, AI coaching. Department AI eval already done (knives demo ready for Jordan) |
-| 3 | **Phase 9: AI Video Analysis** | Gemini API setup needed. Post-walk video upload + analysis |
-| 4 | **Phase 4.5: Data Integrations** | Mango SFTP import (pending cred verification), staffing data (source TBD), sales correlation dashboard |
-| 5 | **Phase 6: White-Label** | Tied to marketing expansion plan. Deferred until other verticals are pursued |
+| 1 | **Phase 5.8 remaining** | Resolution time by priority + SLA color coding, driver-to-action-item correlation, notes/observations callouts, template inline editing |
+| 2 | **Phase 8 remaining** | Streaks leaderboard, section-scoped challenges, achievement emails, role visibility, leaderboard caching |
+| 3 | **Phase 5.9: Public Site Pitch Deck** | Homepage overhaul, /enterprise page, lead funnels, before/after visuals |
+| 4 | **Security hardening** | JWT blacklisting, rate limiting, S3 private ACL, HSTS, Redis auth — see SECURITY_AUDIT.md |
+| 5 | **AI Assessment Feedback** | Track unchecked AI suggestions to refine future assessments, user feedback mechanism |
+| 6 | **Phase 7: Advanced AI** | Predictive scoring, NL queries, AI coaching. Department AI eval already done (knives demo ready for Jordan) |
+| 7 | **Phase 9: AI Video Analysis** | Gemini API setup done. Post-walk video upload + analysis |
+| 8 | **Phase 4.5: Data Integrations** | Mango SFTP import (pending cred verification), staffing data (source TBD), sales correlation dashboard |
+| 9 | **Phase 6: White-Label** | Tied to marketing expansion plan. Deferred until other verticals are pursued |
 
 **Key dependencies:**
 - Mango SFTP: Need to verify credentials and available file formats before building importer
 - Staffing data: Need to identify source (manual entry? POS? scheduling software?)
-- Gemini API: Need API key + billing setup before Phase 9
+- Gemini API: **DONE** — API key configured, google-genai SDK installed, Gemini 2.5 Flash active for assessments + video
 - Department AI eval for knives: **DONE** — ready to demo with Jordan
+- Security audit: **DONE** — 4 critical, 6 high, 9 medium, 6 low findings documented
 
 **Core insight for data integrations:** Not all stores sell equally. Raw sales numbers are misleading. The real metric is **quality score per staff hour** — "it takes X staff hours/day to maintain a quality score of Y, which correlates to sales efficiency of Z." This lets stores run lean while maintaining quality.
 
@@ -384,7 +575,7 @@ See [VIDEO_AI_ANALYSIS.md](./VIDEO_AI_ANALYSIS.md) for the full technical plan, 
 |-------|-----------|
 | Backend | Django 5.1, DRF, Celery, PostgreSQL 16, Redis 7 |
 | Frontend | React 18, Vite, TypeScript, Tailwind CSS |
-| AI | Claude API (Anthropic Sonnet 4.5) |
+| AI | Claude API (Sonnet 4.5 — text/summaries), Gemini 2.5 Flash (photo/video analysis) |
 | Email | Resend |
 | Storage | DigitalOcean Spaces (S3-compatible) |
 | Hosting | DigitalOcean Droplet, Docker Compose |

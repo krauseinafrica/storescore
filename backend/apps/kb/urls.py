@@ -11,4 +11,5 @@ urlpatterns = [
     path('onboarding/', views.OnboardingLessonListView.as_view(), name='onboarding-list'),
     path('onboarding/progress/', views.OnboardingProgressView.as_view(), name='onboarding-progress'),
     path('onboarding/<uuid:lesson_id>/complete/', views.OnboardingCompleteView.as_view(), name='onboarding-complete'),
+    path('onboarding-progress/', views.QuickStartProgressView.as_view(), name='quick-start-progress'),
 ]

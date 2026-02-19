@@ -23,6 +23,17 @@ export interface PlatformOrg {
   created_at: string;
 }
 
+export interface PlatformOrgSubscription {
+  plan_name: string;
+  status: string;
+  store_count: number;
+  discount_percent: number;
+  promo_discount_name: string;
+  promo_discount_percent: number;
+  effective_discount_percent: number;
+  billing_interval: string;
+}
+
 export interface PlatformOrgDetail {
   organization: {
     id: string;
@@ -44,6 +55,7 @@ export interface PlatformOrgDetail {
     name: string;
     store_count: number;
   }>;
+  subscription: PlatformOrgSubscription | null;
 }
 
 export interface CreateOrgData {
@@ -81,7 +93,7 @@ export async function getPlatformOrgDetail(
 
 export async function updatePlatformOrg(
   orgId: string,
-  data: { name?: string }
+  data: { name?: string; promo_discount_name?: string; promo_discount_percent?: number }
 ): Promise<PlatformOrg> {
   const response = await api.patch<PlatformOrg>(
     `/auth/platform/orgs/${orgId}/`,
@@ -136,5 +148,37 @@ export async function importPlatformOrgStores(
     formData,
     { headers: { 'Content-Type': 'multipart/form-data' } }
   );
+  return response.data;
+}
+
+export interface EngagementStats {
+  total_orgs: number;
+  trialing: number;
+  active: number;
+  canceled: number;
+  conversion_rate: number;
+  avg_walks_per_org: number;
+  engagement_tiers: {
+    zero_walks: number;
+    one_to_five: number;
+    five_plus: number;
+  };
+  recent_signups: Array<{ day: string; count: number }>;
+}
+
+export interface LeadFunnel {
+  total_leads: number;
+  by_source: Array<{ source: string; count: number }>;
+  by_status: Array<{ status: string; count: number }>;
+  conversion_by_source: Array<{ source: string; total: number; converted: number; rate: number }>;
+}
+
+export async function getEngagementStats(): Promise<EngagementStats> {
+  const response = await api.get<EngagementStats>('/auth/platform/engagement/');
+  return response.data;
+}
+
+export async function getLeadFunnel(): Promise<LeadFunnel> {
+  const response = await api.get<LeadFunnel>('/auth/platform/lead-funnel/');
   return response.data;
 }

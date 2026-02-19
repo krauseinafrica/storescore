@@ -24,7 +24,25 @@ const FILE_TYPE_BADGES: Record<string, { label: string; classes: string }> = {
   txt: { label: 'TXT', classes: 'bg-gray-50 text-gray-600 ring-gray-500/20' },
 };
 
+export function SOPDocumentsContent() {
+  return <SOPDocumentsInner />;
+}
+
 export default function SOPDocuments() {
+  return (
+    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
+      <div className="mb-6">
+        <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">SOP Documents <InfoButton contextKey="sop-documents-overview" /></h1>
+        <p className="mt-0.5 text-sm text-gray-500">
+          Upload and manage Standard Operating Procedure documents.
+        </p>
+      </div>
+      <SOPDocumentsInner />
+    </div>
+  );
+}
+
+function SOPDocumentsInner() {
   const orgId = getOrgId();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -140,15 +158,7 @@ export default function SOPDocuments() {
   };
 
   return (
-    <div className="px-4 sm:px-6 lg:px-8 py-6 pb-24">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2">SOP Documents <InfoButton contextKey="sop-documents-overview" /></h1>
-        <p className="mt-0.5 text-sm text-gray-500">
-          Upload and manage Standard Operating Procedure documents.
-        </p>
-      </div>
-
+    <>
       {/* Messages */}
       {successMsg && (
         <div className="mb-4 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
@@ -371,6 +381,6 @@ export default function SOPDocuments() {
           })}
         </div>
       )}
-    </div>
+    </>
   );
 }

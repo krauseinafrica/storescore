@@ -7,7 +7,7 @@ from django.utils import timezone
 from django.utils.crypto import get_random_string
 
 from apps.core.models import OrgScopedModel, TimestampedModel
-from apps.core.storage import action_item_photo_path, assessment_photo_path, sop_document_path, walk_evidence_path
+from apps.core.storage import action_item_photo_path, assessment_photo_path, criterion_reference_image_path, sop_document_path, walk_evidence_path
 
 WALK_LOCK_DAYS = 14
 
@@ -30,6 +30,7 @@ class IndustryTemplate(TimestampedModel):
         AUTOMOTIVE = 'automotive', 'Automotive'
         FITNESS = 'fitness', 'Fitness / Gym'
         HOSPITALITY = 'hospitality', 'Hospitality / Hotel'
+        DISCOUNT = 'discount', 'Discount / Variety'
         OTHER = 'other', 'Other'
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -228,6 +229,33 @@ class Criterion(TimestampedModel):
 
     def __str__(self):
         return self.name
+
+
+class CriterionReferenceImage(TimestampedModel):
+    """An ideal reference image for a criterion, used by AI to score by comparison."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    criterion = models.ForeignKey(
+        Criterion,
+        on_delete=models.CASCADE,
+        related_name='reference_images',
+    )
+    image = models.ImageField(upload_to=criterion_reference_image_path)
+    description = models.TextField(
+        blank=True, default='',
+        help_text='What this image shows and what makes it ideal for this criterion.',
+    )
+
+    class Meta:
+        db_table = 'walks_criterionreferenceimage'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['criterion'],
+                name='one_reference_image_per_criterion',
+            ),
+        ]
+
+    def __str__(self):
+        return f'Reference image for {self.criterion.name}'
 
 
 class Walk(OrgScopedModel):
@@ -687,6 +715,8 @@ class ActionItem(OrgScopedModel):
         OPEN = 'open', 'Open'
         IN_PROGRESS = 'in_progress', 'In Progress'
         RESOLVED = 'resolved', 'Resolved'
+        PENDING_REVIEW = 'pending_review', 'Pending Review'
+        APPROVED = 'approved', 'Approved'
         DISMISSED = 'dismissed', 'Dismissed'
 
     class Priority(models.TextChoices):
@@ -698,12 +728,28 @@ class ActionItem(OrgScopedModel):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     walk = models.ForeignKey(
         Walk, on_delete=models.CASCADE, related_name='action_items',
+        null=True, blank=True,
+    )
+    assessment = models.ForeignKey(
+        'SelfAssessment', on_delete=models.SET_NULL, related_name='action_items',
+        null=True, blank=True,
+    )
+    assessment_removed = models.BooleanField(
+        default=False,
+        help_text='Set to True when the linked assessment is deleted, to show indicator.',
     )
     criterion = models.ForeignKey(
         Criterion, on_delete=models.CASCADE, related_name='action_items',
+        null=True, blank=True,
     )
     score = models.ForeignKey(
         Score, on_delete=models.CASCADE, related_name='action_items',
+        null=True, blank=True,
+    )
+    store = models.ForeignKey(
+        'stores.Store', on_delete=models.CASCADE, related_name='action_items',
+        null=True, blank=True,
+        help_text='Direct store reference for manual items (when no walk exists).',
     )
     original_photo = models.ForeignKey(
         WalkPhoto, on_delete=models.SET_NULL,
@@ -733,13 +779,22 @@ class ActionItem(OrgScopedModel):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
         null=True, blank=True, related_name='resolved_action_items',
     )
+    is_manual = models.BooleanField(default=False)
+    # Review/sign-off fields
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='reviewed_action_items',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    review_notes = models.TextField(blank=True, default='')
 
     class Meta:
         db_table = 'walks_actionitem'
         ordering = ['-created_at']
 
     def __str__(self):
-        return f'Action: {self.criterion.name} ({self.status})'
+        name = self.criterion.name if self.criterion else (self.description[:50] or 'Manual item')
+        return f'Action: {name} ({self.status})'
 
 
 class ActionItemResponse(OrgScopedModel):
@@ -778,6 +833,42 @@ class ActionItemPhoto(OrgScopedModel):
 
     def __str__(self):
         return f'Photo for {self.response}'
+
+
+class ActionItemEvent(OrgScopedModel):
+    """Tracks lifecycle events for action item timeline."""
+
+    class EventType(models.TextChoices):
+        CREATED = 'created', 'Created'
+        ASSIGNED = 'assigned', 'Assigned'
+        STATUS_CHANGED = 'status_changed', 'Status Changed'
+        RESPONSE_ADDED = 'response_added', 'Response Added'
+        PHOTO_UPLOADED = 'photo_uploaded', 'Photo Uploaded'
+        AI_VERIFIED = 'ai_verified', 'AI Verified'
+        SUBMITTED_FOR_REVIEW = 'submitted_for_review', 'Submitted for Review'
+        APPROVED = 'approved', 'Approved'
+        REJECTED = 'rejected', 'Rejected'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    action_item = models.ForeignKey(
+        ActionItem, on_delete=models.CASCADE, related_name='events',
+    )
+    event_type = models.CharField(max_length=30, choices=EventType.choices)
+    actor = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True,
+    )
+    notes = models.TextField(blank=True, default='')
+    old_status = models.CharField(max_length=20, blank=True, default='')
+    new_status = models.CharField(max_length=20, blank=True, default='')
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        db_table = 'walks_actionitemevent'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f'{self.event_type} on {self.action_item_id}'
 
 
 # ==================== Feature 3: Manager Self-Assessments ====================
@@ -876,12 +967,15 @@ class SelfAssessment(OrgScopedModel):
 
 
 class AssessmentSubmission(OrgScopedModel):
-    """A single photo submission for one prompt within a self-assessment."""
+    """A single photo or video submission for one prompt within a self-assessment."""
 
     class Rating(models.TextChoices):
         GOOD = 'good', 'Good'
         FAIR = 'fair', 'Fair'
         POOR = 'poor', 'Poor'
+
+    ALLOWED_VIDEO_TYPES = {'video/mp4', 'video/quicktime', 'video/x-m4v'}
+    MAX_VIDEO_SIZE = 100 * 1024 * 1024  # 100 MB
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     assessment = models.ForeignKey(
@@ -890,7 +984,8 @@ class AssessmentSubmission(OrgScopedModel):
     prompt = models.ForeignKey(
         AssessmentPrompt, on_delete=models.CASCADE, related_name='submissions',
     )
-    image = models.ImageField(upload_to=assessment_photo_path)
+    image = models.FileField(upload_to=assessment_photo_path)
+    is_video = models.BooleanField(default=False)
     caption = models.CharField(max_length=255, blank=True, default='')
     self_rating = models.CharField(
         max_length=10, choices=Rating.choices, blank=True, default='',
@@ -899,6 +994,19 @@ class AssessmentSubmission(OrgScopedModel):
     ai_rating = models.CharField(
         max_length=10, choices=Rating.choices, blank=True, default='',
     )
+    reviewer_rating = models.CharField(
+        max_length=10, choices=Rating.choices, blank=True, default='',
+        help_text='Optional override rating set by the reviewer.',
+    )
+    reviewer_notes = models.TextField(
+        blank=True, default='',
+        help_text='Optional commentary from the reviewer.',
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='reviewed_submissions',
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -918,6 +1026,7 @@ class CorrectiveAction(OrgScopedModel):
     class ActionType(models.TextChoices):
         OVERDUE_EVALUATION = 'overdue_evaluation', 'Overdue Evaluation'
         UNACKNOWLEDGED_WALK = 'unacknowledged_walk', 'Unacknowledged Walk'
+        MANUAL = 'manual', 'Manual'
 
     class EscalationLevel(models.TextChoices):
         REMINDER = 'reminder', 'Reminder'
@@ -938,6 +1047,7 @@ class CorrectiveAction(OrgScopedModel):
     )
     walk = models.ForeignKey(
         Walk, on_delete=models.CASCADE, related_name='corrective_actions',
+        null=True, blank=True,
     )
     store = models.ForeignKey(
         'stores.Store', on_delete=models.CASCADE, related_name='corrective_actions',
@@ -950,6 +1060,7 @@ class CorrectiveAction(OrgScopedModel):
     last_notified_at = models.DateTimeField(null=True, blank=True)
     resolved_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True, default='')
+    is_manual = models.BooleanField(default=False)
 
     class Meta:
         db_table = 'walks_correctiveaction'

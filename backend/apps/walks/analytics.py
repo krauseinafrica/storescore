@@ -6,10 +6,11 @@ section-level breakdowns, and CSV export.
 """
 
 import csv
+from collections import defaultdict
 from datetime import timedelta
 from decimal import Decimal
 
-from django.db.models import Avg, Count, F, Max, StdDev, Value
+from django.db.models import Avg, Count, F, Max, Q as models_Q, StdDev, Value
 from django.db.models.functions import TruncMonth, TruncWeek
 from django.http import HttpResponse
 from django.utils import timezone
@@ -19,7 +20,7 @@ from rest_framework.views import APIView
 
 from apps.core.permissions import IsOrgMember, get_accessible_store_ids
 
-from .models import ReportSchedule, Score, Section, Walk
+from .models import ActionItem, Driver, ReportSchedule, Score, Section, Walk
 
 
 def _parse_period(period_str):
@@ -281,9 +282,12 @@ class SectionBreakdownView(APIView):
         if not walk_ids:
             return Response([])
 
-        # Get all scores for these walks
-        scores = Score.objects.filter(walk_id__in=walk_ids).select_related(
-            'criterion__section'
+        # Pre-aggregate all criterion averages in a single query
+        criterion_avgs = dict(
+            Score.objects.filter(walk_id__in=walk_ids)
+            .values('criterion_id')
+            .annotate(avg_points=Avg('points'))
+            .values_list('criterion_id', 'avg_points')
         )
 
         # Get all sections from templates used in these walks
@@ -301,9 +305,7 @@ class SectionBreakdownView(APIView):
             criteria_count = 0
 
             for criterion in section.criteria.all().order_by('order'):
-                criterion_scores = scores.filter(criterion=criterion)
-                agg = criterion_scores.aggregate(avg_points=Avg('points'))
-                avg_points = agg['avg_points']
+                avg_points = criterion_avgs.get(criterion.id)
 
                 if avg_points is not None:
                     avg_pct = (float(avg_points) / criterion.max_points) * 100
@@ -523,10 +525,6 @@ class SectionTrendsView(APIView):
         if not walk_ids:
             return Response([])
 
-        scores = Score.objects.filter(walk_id__in=walk_ids).select_related(
-            'criterion__section', 'walk'
-        )
-
         template_ids = walks.values_list('template_id', flat=True).distinct()
         sections = (
             Section.objects.filter(template_id__in=template_ids)
@@ -534,40 +532,59 @@ class SectionTrendsView(APIView):
             .order_by('order')
         )
 
-        result = []
+        # Pre-compute per-section max_points to avoid repeated queries
+        section_meta = {}  # section_id -> {name, order, avg_max}
         for section in sections:
             criteria = list(section.criteria.all())
             if not criteria:
                 continue
-
             total_max = sum(c.max_points for c in criteria)
+            avg_max = total_max / len(criteria) if criteria else 10
+            section_meta[section.id] = {
+                'name': section.name,
+                'order': section.order,
+                'avg_max': avg_max,
+            }
 
-            monthly = (
-                scores.filter(criterion__section=section)
-                .annotate(month=TruncMonth('walk__completed_date'))
-                .values('month')
-                .annotate(
-                    total_avg_points=Avg('points'),
-                    score_count=Count('id'),
-                )
-                .order_by('month')
+        if not section_meta:
+            return Response([])
+
+        # Single aggregation query across all sections, grouped by section + month
+        monthly_data = (
+            Score.objects.filter(
+                walk_id__in=walk_ids,
+                criterion__section_id__in=section_meta.keys(),
             )
+            .annotate(month=TruncMonth('walk__completed_date'))
+            .values('criterion__section_id', 'month')
+            .annotate(
+                total_avg_points=Avg('points'),
+                score_count=Count('id'),
+            )
+            .order_by('criterion__section_id', 'month')
+        )
 
-            points = []
-            for entry in monthly:
-                # Average percentage for the section that month
-                avg_pts = float(entry['total_avg_points'])
-                avg_max = total_max / len(criteria) if criteria else 10
-                pct = (avg_pts / avg_max) * 100 if avg_max > 0 else 0
+        # Group results by section
+        section_monthly_map = defaultdict(list)
+        for entry in monthly_data:
+            sid = entry['criterion__section_id']
+            meta = section_meta.get(sid)
+            if not meta:
+                continue
+            avg_pts = float(entry['total_avg_points'])
+            avg_max = meta['avg_max']
+            pct = (avg_pts / avg_max) * 100 if avg_max > 0 else 0
+            section_monthly_map[sid].append({
+                'month': entry['month'].strftime('%Y-%m'),
+                'avg_percentage': round(pct, 1),
+            })
 
-                points.append({
-                    'month': entry['month'].strftime('%Y-%m'),
-                    'avg_percentage': round(pct, 1),
-                })
-
+        # Build result in section order
+        result = []
+        for sid, meta in sorted(section_meta.items(), key=lambda x: x[1]['order']):
             result.append({
-                'section_name': section.name,
-                'points': points,
+                'section_name': meta['name'],
+                'points': section_monthly_map.get(sid, []),
             })
 
         return Response(result)
@@ -864,3 +881,479 @@ class EvaluatorConsistencyView(APIView):
         result.sort(key=lambda x: (flag_order.get(x['flag_level'], 2), -x['walk_count']))
 
         return Response(result)
+
+
+class SectionStoreComparisonView(APIView):
+    """
+    GET /api/v1/walks/analytics/section-stores/
+
+    Per-store average % for a given section, with per-criterion breakdown.
+    Accepts: ?section={name}&period=90d
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get(self, request):
+        section_name = request.query_params.get('section', '')
+        period = request.query_params.get('period', '90d')
+
+        if not section_name:
+            return Response({'detail': 'section parameter required'}, status=400)
+
+        walks = _completed_walks_qs(request, period)
+        walk_ids = walks.values_list('id', flat=True)
+
+        if not walk_ids:
+            return Response({
+                'section_name': section_name,
+                'org_avg': 0,
+                'stores': [],
+                'criteria': [],
+            })
+
+        # Get scores for this section
+        scores = Score.objects.filter(
+            walk_id__in=walk_ids,
+            criterion__section__name=section_name,
+        ).select_related('criterion', 'walk__store')
+
+        if not scores.exists():
+            return Response({
+                'section_name': section_name,
+                'org_avg': 0,
+                'stores': [],
+                'criteria': [],
+            })
+
+        # Org-wide avg per criterion
+        criteria_data = (
+            scores.values('criterion__name', 'criterion__max_points')
+            .annotate(avg_pts=Avg('points'))
+            .order_by('criterion__name')
+        )
+        criteria_list = []
+        org_total_pct = 0
+        for c in criteria_data:
+            max_pts = c['criterion__max_points'] or 1
+            pct = (float(c['avg_pts']) / max_pts) * 100
+            criteria_list.append({
+                'name': c['criterion__name'],
+                'avg_percentage': round(pct, 1),
+            })
+            org_total_pct += pct
+        org_avg = round(org_total_pct / len(criteria_list), 1) if criteria_list else 0
+
+        # Per-store averages
+        store_data = (
+            scores.values('walk__store__id', 'walk__store__name')
+            .annotate(avg_pts=Avg('points'), walk_count=Count('walk', distinct=True))
+            .order_by('walk__store__name')
+        )
+
+        # Get max_points for the section's criteria
+        section_criteria = scores.values_list('criterion__max_points', flat=True).distinct()
+        avg_max = sum(section_criteria) / len(section_criteria) if section_criteria else 1
+
+        stores = []
+        for s in store_data:
+            pct = (float(s['avg_pts']) / avg_max) * 100
+            stores.append({
+                'store_id': str(s['walk__store__id']),
+                'store_name': s['walk__store__name'],
+                'avg_percentage': round(pct, 1),
+                'walk_count': s['walk_count'],
+            })
+
+        return Response({
+            'section_name': section_name,
+            'org_avg': org_avg,
+            'stores': stores,
+            'criteria': criteria_list,
+        })
+
+
+class EvaluatorTrendsView(APIView):
+    """
+    GET /api/v1/walks/analytics/evaluator-trends/{evaluator_id}/
+
+    Monthly score trend + section bias for one evaluator.
+    Accepts: ?period=90d
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get(self, request, evaluator_id):
+        period = request.query_params.get('period', '90d')
+        walks = _completed_walks_qs(request, period)
+
+        ev_walks = walks.filter(conducted_by_id=evaluator_id)
+        if not ev_walks.exists():
+            return Response({
+                'evaluator_id': str(evaluator_id),
+                'evaluator_name': '',
+                'monthly_scores': [],
+                'section_bias': [],
+                'store_comparison': [],
+            })
+
+        # Get evaluator name
+        first_walk = ev_walks.select_related('conducted_by').first()
+        name = f'{first_walk.conducted_by.first_name} {first_walk.conducted_by.last_name}'.strip()
+        if not name:
+            name = first_walk.conducted_by.email
+
+        # Monthly scores: evaluator avg vs org avg
+        ev_monthly = (
+            ev_walks.annotate(month=TruncMonth('completed_date'))
+            .values('month')
+            .annotate(avg_score=Avg('total_score'), walk_count=Count('id'))
+            .order_by('month')
+        )
+
+        org_monthly = (
+            walks.annotate(month=TruncMonth('completed_date'))
+            .values('month')
+            .annotate(avg_score=Avg('total_score'))
+            .order_by('month')
+        )
+        org_monthly_map = {
+            entry['month'].strftime('%Y-%m'): round(float(entry['avg_score']), 1)
+            for entry in org_monthly if entry['avg_score']
+        }
+
+        monthly_scores = []
+        for entry in ev_monthly:
+            month_str = entry['month'].strftime('%Y-%m')
+            monthly_scores.append({
+                'month': month_str,
+                'avg_score': round(float(entry['avg_score']), 1) if entry['avg_score'] else 0,
+                'org_avg': org_monthly_map.get(month_str, 0),
+                'walk_count': entry['walk_count'],
+            })
+
+        # Section bias: evaluator avg vs org avg per section
+        ev_walk_ids = ev_walks.values_list('id', flat=True)
+        all_walk_ids = walks.values_list('id', flat=True)
+
+        template_ids = walks.values_list('template_id', flat=True).distinct()
+        sections = Section.objects.filter(template_id__in=template_ids).order_by('order')
+
+        section_bias = []
+        for section in sections:
+            criteria = list(section.criteria.all())
+            if not criteria:
+                continue
+            avg_max = sum(c.max_points for c in criteria) / len(criteria)
+
+            ev_scores = Score.objects.filter(
+                walk_id__in=ev_walk_ids,
+                criterion__section=section,
+            ).aggregate(avg=Avg('points'))
+
+            org_scores = Score.objects.filter(
+                walk_id__in=all_walk_ids,
+                criterion__section=section,
+            ).aggregate(avg=Avg('points'))
+
+            ev_avg = (float(ev_scores['avg']) / avg_max) * 100 if ev_scores['avg'] else 0
+            org_avg = (float(org_scores['avg']) / avg_max) * 100 if org_scores['avg'] else 0
+
+            section_bias.append({
+                'section_name': section.name,
+                'evaluator_avg': round(ev_avg, 1),
+                'org_avg': round(org_avg, 1),
+                'difference': round(ev_avg - org_avg, 1),
+            })
+
+        # Store comparison: evaluator avg vs org avg per store
+        ev_store_scores = (
+            ev_walks.values('store__id', 'store__name')
+            .annotate(ev_avg=Avg('total_score'))
+            .order_by('store__name')
+        )
+
+        store_comparison = []
+        for ss in ev_store_scores:
+            org_store_avg = (
+                walks.filter(store_id=ss['store__id'])
+                .aggregate(avg=Avg('total_score'))
+            )
+            store_comparison.append({
+                'store_id': str(ss['store__id']),
+                'store_name': ss['store__name'],
+                'evaluator_avg': round(float(ss['ev_avg']), 1) if ss['ev_avg'] else 0,
+                'org_avg': round(float(org_store_avg['avg']), 1) if org_store_avg['avg'] else 0,
+            })
+
+        return Response({
+            'evaluator_id': str(evaluator_id),
+            'evaluator_name': name,
+            'monthly_scores': monthly_scores,
+            'section_bias': section_bias,
+            'store_comparison': store_comparison,
+        })
+
+
+class ActionItemAnalyticsView(APIView):
+    """
+    GET /api/v1/walks/analytics/action-items/
+
+    Aggregate action item statistics.
+    Accepts: ?period=90d
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get(self, request):
+        period = request.query_params.get('period', '90d')
+        walks = _completed_walks_qs(request, period)
+        walk_ids = walks.values_list('id', flat=True)
+
+        items = ActionItem.objects.filter(
+            organization=request.org,
+            walk_id__in=walk_ids,
+        )
+
+        total = items.count()
+        if total == 0:
+            return Response({
+                'total': 0,
+                'open': 0,
+                'in_progress': 0,
+                'resolved': 0,
+                'dismissed': 0,
+                'avg_resolution_days': None,
+                'by_store': [],
+                'by_section': [],
+                'by_priority': [],
+                'monthly_trend': [],
+            })
+
+        # Status counts
+        status_counts = dict(
+            items.values('status')
+            .annotate(count=Count('id'))
+            .values_list('status', 'count')
+        )
+
+        # Average resolution time
+        resolved_items = items.filter(
+            status=ActionItem.Status.RESOLVED,
+            resolved_at__isnull=False,
+        )
+        avg_resolution = None
+        if resolved_items.exists():
+            total_days = 0
+            count = 0
+            for item in resolved_items:
+                delta = item.resolved_at - item.created_at
+                total_days += delta.total_seconds() / 86400
+                count += 1
+            avg_resolution = round(total_days / count, 1) if count > 0 else None
+
+        # By store
+        by_store = (
+            items.values('walk__store__id', 'walk__store__name')
+            .annotate(
+                total=Count('id'),
+                open=Count('id', filter=models_Q(status='open')),
+                resolved=Count('id', filter=models_Q(status='resolved')),
+            )
+            .order_by('-total')
+        )
+        store_list = [
+            {
+                'store_id': str(s['walk__store__id']),
+                'store_name': s['walk__store__name'],
+                'total': s['total'],
+                'open': s['open'],
+                'resolved': s['resolved'],
+            }
+            for s in by_store
+        ]
+
+        # By section
+        by_section = (
+            items.values('criterion__section__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+        section_list = [
+            {'section_name': s['criterion__section__name'], 'count': s['count']}
+            for s in by_section if s['criterion__section__name']
+        ]
+
+        # By priority
+        by_priority = (
+            items.values('priority')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+        priority_list = [
+            {'priority': p['priority'], 'count': p['count']}
+            for p in by_priority
+        ]
+
+        # Monthly trend
+        monthly = (
+            items.annotate(month=TruncMonth('created_at'))
+            .values('month')
+            .annotate(
+                created=Count('id'),
+                resolved=Count('id', filter=models_Q(status='resolved')),
+            )
+            .order_by('month')
+        )
+        monthly_list = [
+            {
+                'month': m['month'].strftime('%Y-%m'),
+                'created': m['created'],
+                'resolved': m['resolved'],
+            }
+            for m in monthly
+        ]
+
+        return Response({
+            'total': total,
+            'open': status_counts.get('open', 0),
+            'in_progress': status_counts.get('in_progress', 0),
+            'resolved': status_counts.get('resolved', 0),
+            'dismissed': status_counts.get('dismissed', 0),
+            'avg_resolution_days': avg_resolution,
+            'by_store': store_list,
+            'by_section': section_list,
+            'by_priority': priority_list,
+            'monthly_trend': monthly_list,
+        })
+
+
+class DriverAnalyticsView(APIView):
+    """
+    GET /api/v1/walks/analytics/drivers/
+
+    Aggregate driver selection statistics.
+    Accepts: ?period=90d
+    """
+    permission_classes = [IsAuthenticated, IsOrgMember]
+
+    def get(self, request):
+        period = request.query_params.get('period', '90d')
+        walks = _completed_walks_qs(request, period)
+        walk_ids = walks.values_list('id', flat=True)
+
+        # Count configured drivers
+        template_ids = walks.values_list('template_id', flat=True).distinct()
+        total_configured = Driver.objects.filter(
+            criterion__section__template_id__in=template_ids,
+            is_active=True,
+        ).count()
+
+        # Get scores with drivers (M2M)
+        scores_with_drivers = Score.objects.filter(
+            walk_id__in=walk_ids,
+            drivers__isnull=False,
+        ).distinct()
+
+        # Also check legacy FK driver
+        scores_with_legacy = Score.objects.filter(
+            walk_id__in=walk_ids,
+            driver__isnull=False,
+        )
+
+        # Combine driver selections
+        # M2M: count per driver
+        m2m_counts = (
+            scores_with_drivers
+            .values('drivers__id', 'drivers__name', 'drivers__criterion__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+
+        # Legacy FK: count per driver
+        legacy_counts = (
+            scores_with_legacy
+            .values('driver__id', 'driver__name', 'driver__criterion__name')
+            .annotate(count=Count('id'))
+            .order_by('-count')
+        )
+
+        # Merge driver counts
+        driver_counts = {}
+        for d in m2m_counts:
+            key = str(d['drivers__id'])
+            driver_counts[key] = {
+                'name': d['drivers__name'],
+                'count': d['count'],
+                'criterion_name': d['drivers__criterion__name'],
+            }
+        for d in legacy_counts:
+            key = str(d['driver__id'])
+            if key in driver_counts:
+                driver_counts[key]['count'] += d['count']
+            else:
+                driver_counts[key] = {
+                    'name': d['driver__name'],
+                    'count': d['count'],
+                    'criterion_name': d['driver__criterion__name'],
+                }
+
+        total_selections = sum(d['count'] for d in driver_counts.values())
+        top_drivers = sorted(driver_counts.values(), key=lambda x: -x['count'])[:10]
+
+        # By section
+        section_drivers = (
+            scores_with_drivers
+            .values('criterion__section__name')
+            .annotate(count=Count('drivers', distinct=False))
+            .order_by('-count')
+        )
+        by_section = []
+        for sd in section_drivers:
+            # Get top driver for this section
+            top = (
+                scores_with_drivers.filter(criterion__section__name=sd['criterion__section__name'])
+                .values('drivers__name')
+                .annotate(cnt=Count('id'))
+                .order_by('-cnt')
+                .first()
+            )
+            by_section.append({
+                'section_name': sd['criterion__section__name'],
+                'count': sd['count'],
+                'top_driver': top['drivers__name'] if top else None,
+            })
+
+        # By store
+        by_store = (
+            scores_with_drivers
+            .values('walk__store__id', 'walk__store__name')
+            .annotate(count=Count('drivers', distinct=False))
+            .order_by('-count')
+        )
+        store_list = [
+            {
+                'store_id': str(s['walk__store__id']),
+                'store_name': s['walk__store__name'],
+                'count': s['count'],
+            }
+            for s in by_store
+        ]
+
+        # Monthly trend
+        monthly = (
+            scores_with_drivers
+            .annotate(month=TruncMonth('walk__completed_date'))
+            .values('month')
+            .annotate(count=Count('drivers', distinct=False))
+            .order_by('month')
+        )
+        monthly_list = [
+            {'month': m['month'].strftime('%Y-%m'), 'count': m['count']}
+            for m in monthly
+        ]
+
+        return Response({
+            'total_selections': total_selections,
+            'total_configured': total_configured,
+            'top_drivers': top_drivers,
+            'by_section': by_section,
+            'by_store': store_list,
+            'monthly_trend': monthly_list,
+        })

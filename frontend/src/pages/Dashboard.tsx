@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useSubscription } from '../hooks/useSubscription';
 import InfoButton from '../components/InfoButton';
-import { getStores, getWalks, getTemplates, getBenchmarking, getActionItems, getCorrectiveActionSummary } from '../api/walks';
-import type { BenchmarkData } from '../api/walks';
+import { getStores, getWalks, getTemplates, getBenchmarking, getActionItems, getCorrectiveActionSummary, getOrgSettings, getAssessments } from '../api/walks';
+import type { BenchmarkData, OrgSettingsData } from '../api/walks';
 import { getSectionBreakdown, getSectionTrends } from '../api/analytics';
 import type { SectionBreakdown, SectionTrendData } from '../api/analytics';
+import { getLeaderboard, getChallenges, getAwardedAchievements } from '../api/gamification';
 import { getOrgId } from '../utils/org';
-import type { Walk, Store, ScoringTemplate, ActionItem, CorrectiveActionSummary } from '../types';
+import type { Walk, Store, ScoringTemplate, ActionItem, CorrectiveActionSummary, LeaderboardEntry, Challenge, AwardedAchievement, SelfAssessment } from '../types';
 
 function formatDate(dateStr: string): string {
   const d = new Date(dateStr);
@@ -36,7 +38,11 @@ function getScoreColor(pct: number): string {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { hasFeature } = useSubscription();
   const orgId = getOrgId();
+
+  const hasGamificationBasic = hasFeature('gamification_basic');
+  const hasGamificationAdvanced = hasFeature('gamification_advanced');
 
   const [stores, setStores] = useState<Store[]>([]);
   const [walks, setWalks] = useState<Walk[]>([]);
@@ -46,8 +52,26 @@ export default function Dashboard() {
   const [caSummary, setCaSummary] = useState<CorrectiveActionSummary | null>(null);
   const [sectionBreakdown, setSectionBreakdown] = useState<SectionBreakdown[]>([]);
   const [sectionTrends, setSectionTrends] = useState<SectionTrendData[]>([]);
+  const [orgSettings, setOrgSettings] = useState<OrgSettingsData | null>(null);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [activeChallenges, setActiveChallenges] = useState<Challenge[]>([]);
+  const [recentAwards, setRecentAwards] = useState<AwardedAchievement[]>([]);
+  const [assessments, setAssessments] = useState<SelfAssessment[]>([]);
   const [loading, setLoading] = useState(true);
   const [rankAsc, setRankAsc] = useState(true);
+  const [evalMenuOpen, setEvalMenuOpen] = useState(false);
+  const evalMenuRef = useRef<HTMLDivElement>(null);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (evalMenuRef.current && !evalMenuRef.current.contains(e.target as Node)) {
+        setEvalMenuOpen(false);
+      }
+    }
+    if (evalMenuOpen) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [evalMenuOpen]);
 
   useEffect(() => {
     if (!orgId) {
@@ -59,7 +83,7 @@ export default function Dashboard() {
 
     async function fetchAll() {
       try {
-        const [storeData, walkData, templateData, benchData, aiData, caData, sbData, stData] = await Promise.all([
+        const [storeData, walkData, templateData, benchData, aiData, caData, sbData, stData, settingsData, assessmentData] = await Promise.all([
           getStores(orgId).catch(() => [] as Store[]),
           getWalks(orgId).catch(() => [] as Walk[]),
           getTemplates(orgId).catch(() => [] as ScoringTemplate[]),
@@ -68,6 +92,8 @@ export default function Dashboard() {
           getCorrectiveActionSummary(orgId).catch(() => null),
           getSectionBreakdown(orgId, { period: '90d' }).catch(() => [] as SectionBreakdown[]),
           getSectionTrends(orgId, { period: '6m' }).catch(() => [] as SectionTrendData[]),
+          getOrgSettings(orgId).catch(() => null),
+          getAssessments(orgId).catch(() => [] as SelfAssessment[]),
         ]);
 
         if (!cancelled) {
@@ -79,6 +105,32 @@ export default function Dashboard() {
           setCaSummary(caData);
           setSectionBreakdown(sbData);
           setSectionTrends(stData);
+          setOrgSettings(settingsData);
+          setAssessments(assessmentData);
+
+          // Fetch gamification data based on plan tier and org toggle
+          if (settingsData?.gamification_enabled && hasGamificationBasic) {
+            const promises: [
+              Promise<LeaderboardEntry[]>,
+              Promise<Challenge[]>,
+              Promise<AwardedAchievement[]>,
+            ] = [
+              hasGamificationAdvanced
+                ? getLeaderboard(orgId, { period: '30d', type: 'avg_score', limit: 5 }).catch(() => [] as LeaderboardEntry[])
+                : Promise.resolve([] as LeaderboardEntry[]),
+              hasGamificationAdvanced
+                ? getChallenges(orgId).catch(() => [] as Challenge[])
+                : Promise.resolve([] as Challenge[]),
+              getAwardedAchievements(orgId).catch(() => [] as AwardedAchievement[]),
+            ];
+            Promise.all(promises).then(([lb, ch, aw]) => {
+              if (!cancelled) {
+                setLeaderboard(lb);
+                setActiveChallenges(ch.filter(c => c.is_active));
+                setRecentAwards(aw.slice(0, 3));
+              }
+            });
+          }
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -94,8 +146,17 @@ export default function Dashboard() {
   const completedWalks = walks
     .filter((w) => w.status === 'completed')
     .sort((a, b) => new Date(b.completed_date || b.updated_at).getTime() - new Date(a.completed_date || a.updated_at).getTime());
-  const recentWalks = completedWalks.slice(0, 5);
   const activeTemplates = templates.filter((t) => t.is_active);
+
+  // Unified recent evaluations: completed walks + submitted/reviewed assessments
+  const completedAssessments = assessments.filter((a) => a.status === 'submitted' || a.status === 'reviewed');
+  type RecentEval = { type: 'walk'; data: Walk; date: Date } | { type: 'assessment'; data: SelfAssessment; date: Date };
+  const recentEvaluations: RecentEval[] = [
+    ...completedWalks.map((w) => ({ type: 'walk' as const, data: w, date: new Date(w.completed_date || w.updated_at) })),
+    ...completedAssessments.map((a) => ({ type: 'assessment' as const, data: a, date: new Date(a.submitted_at || a.updated_at) })),
+  ]
+    .sort((a, b) => b.date.getTime() - a.date.getTime())
+    .slice(0, 5);
 
   // Completed in last 90 days
   const ninetyDaysAgo = new Date();
@@ -178,15 +239,36 @@ export default function Dashboard() {
             Here's your store evaluation overview.
           </p>
         </div>
-        <Link
-          to="/walks/new"
-          className="hidden sm:inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 transition-colors"
-        >
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Start New Walk
-        </Link>
+        <div className="relative hidden sm:block" ref={evalMenuRef}>
+          <button
+            onClick={() => setEvalMenuOpen((o) => !o)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 transition-colors"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+            </svg>
+            Start New Evaluation
+            <svg className="w-3.5 h-3.5 ml-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {evalMenuOpen && (
+            <div className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-lg ring-1 ring-gray-900/10 py-1 z-50">
+              <Link to="/walks/new" onClick={() => setEvalMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                <svg className="w-4 h-4 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                Store Walk
+              </Link>
+              <Link to="/evaluations#assessments" onClick={() => setEvalMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                <svg className="w-4 h-4 text-violet-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                Assessment
+              </Link>
+              <Link to="/evaluations#department" onClick={() => setEvalMenuOpen(false)} className="flex items-center gap-2.5 px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50">
+                <svg className="w-4 h-4 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+                Dept Evaluation
+              </Link>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Stat cards */}
@@ -276,36 +358,56 @@ export default function Dashboard() {
             </div>
           )}
 
-          {/* Recent completed walks */}
+          {/* Recent evaluations (walks + assessments) */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-900">Recent Walks</h2>
-              {completedWalks.length > 5 && (
-                <Link to="/walks" className="text-xs font-medium text-primary-600 hover:text-primary-700">
+              <h2 className="text-sm font-semibold text-gray-900">Recent Evaluations</h2>
+              {(completedWalks.length + completedAssessments.length) > 5 && (
+                <Link to="/evaluations" className="text-xs font-medium text-primary-600 hover:text-primary-700">
                   View all
                 </Link>
               )}
             </div>
 
-            {recentWalks.length > 0 ? (
+            {recentEvaluations.length > 0 ? (
               <div className="space-y-2">
-                {recentWalks.map((walk) => (
+                {recentEvaluations.map((item) => item.type === 'walk' ? (
                   <Link
-                    key={walk.id}
-                    to={`/walks/${walk.id}`}
+                    key={`walk-${item.data.id}`}
+                    to={`/walks/${item.data.id}`}
                     className="flex items-center justify-between bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 hover:shadow-md transition-shadow active:bg-gray-50"
                   >
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-gray-900 truncate">{walk.store_name}</p>
+                      <p className="text-sm font-semibold text-gray-900 truncate">{item.data.store_name}</p>
                       <p className="text-xs text-gray-400 mt-0.5">
-                        {formatDate(walk.scheduled_date)}
+                        {formatDate(item.data.scheduled_date)}
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-primary-50 text-primary-700 font-medium">Walk</span>
                       </p>
                     </div>
-                    {walk.total_score !== null && (
-                      <span className={`text-lg font-bold ml-3 flex-shrink-0 ${getScoreColor(walk.total_score)}`}>
-                        {Math.round(walk.total_score)}%
+                    {item.data.total_score !== null && (
+                      <span className={`text-lg font-bold ml-3 flex-shrink-0 ${getScoreColor(item.data.total_score)}`}>
+                        {Math.round(item.data.total_score)}%
                       </span>
                     )}
+                  </Link>
+                ) : (
+                  <Link
+                    key={`assessment-${item.data.id}`}
+                    to={`/evaluations?assessment=${item.data.id}#assessments`}
+                    className="flex items-center justify-between bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 hover:shadow-md transition-shadow active:bg-gray-50"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{item.data.store_name}</p>
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {formatDate(item.data.submitted_at || item.data.created_at)}
+                        <span className="ml-1.5 text-[10px] px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 font-medium">Assessment</span>
+                      </p>
+                    </div>
+                    <span className={`text-xs font-medium px-2 py-1 rounded-full ml-3 flex-shrink-0 ${
+                      item.data.status === 'reviewed' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {item.data.status === 'reviewed' ? 'Reviewed' : 'Submitted'}
+                    </span>
                   </Link>
                 ))}
               </div>
@@ -314,16 +416,18 @@ export default function Dashboard() {
                 <svg className="w-10 h-10 text-gray-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
                 </svg>
-                <p className="mt-2 text-sm text-gray-500">No completed walks yet</p>
-                <Link
-                  to="/walks/new"
-                  className="mt-3 inline-flex items-center gap-1.5 text-sm font-medium text-primary-600 hover:text-primary-700"
-                >
-                  Start your first walk
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                  </svg>
-                </Link>
+                <p className="mt-2 text-sm text-gray-500">No completed evaluations yet</p>
+                <div className="mt-3 flex justify-center gap-2">
+                  <Link to="/walks/new" className="inline-flex items-center gap-1 text-xs font-medium text-primary-600 hover:text-primary-700 px-2.5 py-1.5 rounded-lg bg-primary-50 hover:bg-primary-100 transition-colors">
+                    Store Walk
+                  </Link>
+                  <Link to="/evaluations#assessments" className="inline-flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-700 px-2.5 py-1.5 rounded-lg bg-violet-50 hover:bg-violet-100 transition-colors">
+                    Assessment
+                  </Link>
+                  <Link to="/evaluations#department" className="inline-flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700 px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 transition-colors">
+                    Dept Eval
+                  </Link>
+                </div>
               </div>
             )}
           </div>
@@ -476,20 +580,135 @@ export default function Dashboard() {
               </div>
             </div>
           )}
+
+          {/* Mini Leaderboard Widget (Enterprise only) */}
+          {orgSettings?.gamification_enabled && hasGamificationAdvanced && leaderboard.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-900">Leaderboard</h2>
+                <Link to="/gamification" className="text-xs font-medium text-primary-600 hover:text-primary-700">
+                  View full
+                </Link>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+                <p className="text-[11px] text-gray-400 mb-3">Top stores this month by avg score</p>
+                <div className="space-y-1">
+                  {leaderboard.map((entry) => (
+                    <div key={entry.store_id} className="flex items-center gap-2 py-1.5">
+                      <span className="text-xs font-medium w-5 text-right flex-shrink-0">
+                        {entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : (
+                          <span className="text-gray-400">{entry.rank}</span>
+                        )}
+                      </span>
+                      <span className="text-xs text-gray-700 truncate flex-1">{entry.store_name}</span>
+                      <span className={`text-xs font-bold flex-shrink-0 ${getScoreColor(entry.value)}`}>
+                        {entry.value.toFixed(1)}%
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Active Challenge Widget (Enterprise only) */}
+          {orgSettings?.gamification_enabled && hasGamificationAdvanced && activeChallenges.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-900">Active Challenge</h2>
+                <Link to="/gamification" className="text-xs font-medium text-primary-600 hover:text-primary-700">
+                  View all
+                </Link>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+                {activeChallenges.slice(0, 1).map((challenge) => {
+                  const daysLeft = Math.max(0, Math.ceil((new Date(challenge.end_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)));
+                  return (
+                    <div key={challenge.id}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span className="text-sm font-semibold text-gray-900 truncate">{challenge.name}</span>
+                      </div>
+                      <p className="text-xs text-gray-500 line-clamp-2 mb-2">{challenge.description}</p>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-amber-600 font-medium">{daysLeft} day{daysLeft !== 1 ? 's' : ''} left</span>
+                        <span className="text-gray-400">
+                          {challenge.challenge_type === 'score_target' ? 'Score Target' :
+                           challenge.challenge_type === 'most_improved' ? 'Most Improved' :
+                           challenge.challenge_type === 'walk_count' ? 'Walk Count' : 'Highest Score'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Recent Badges Widget (Pro+ with gamification_basic) */}
+          {orgSettings?.gamification_enabled && hasGamificationBasic && recentAwards.length > 0 && (
+            <div>
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-900">Recent Badges</h2>
+                <Link to="/gamification" className="text-xs font-medium text-primary-600 hover:text-primary-700">
+                  View all
+                </Link>
+              </div>
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+                <div className="space-y-2.5">
+                  {recentAwards.map((award) => (
+                    <div key={award.id} className="flex items-center gap-2.5">
+                      <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
+                        award.achievement.tier === 'platinum' ? 'bg-violet-100 text-violet-600' :
+                        award.achievement.tier === 'gold' ? 'bg-amber-100 text-amber-600' :
+                        award.achievement.tier === 'silver' ? 'bg-gray-200 text-gray-600' :
+                        'bg-orange-100 text-orange-600'
+                      }`}>
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+                        </svg>
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs font-semibold text-gray-900 truncate">{award.achievement.name}</p>
+                        <p className="text-[10px] text-gray-400 truncate">{award.store_name || award.user_name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Mobile-only: Start Walk CTA */}
+      {/* Mobile-only: Start New Evaluation */}
       <div className="mt-6 sm:hidden">
-        <Link
-          to="/walks/new"
-          className="flex items-center justify-center gap-2 w-full rounded-xl bg-primary-600 px-4 py-3.5 text-base font-semibold text-white shadow-sm hover:bg-primary-700 active:bg-primary-800 transition-colors"
-        >
-          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-          </svg>
-          Start New Walk
-        </Link>
+        <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Start New Evaluation</p>
+        <div className="grid grid-cols-3 gap-2">
+          <Link
+            to="/walks/new"
+            className="flex flex-col items-center gap-1.5 rounded-xl bg-primary-600 px-3 py-3 text-white shadow-sm hover:bg-primary-700 active:bg-primary-800 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+            <span className="text-xs font-semibold">Store Walk</span>
+          </Link>
+          <Link
+            to="/evaluations#assessments"
+            className="flex flex-col items-center gap-1.5 rounded-xl bg-violet-600 px-3 py-3 text-white shadow-sm hover:bg-violet-700 active:bg-violet-800 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+            <span className="text-xs font-semibold">Assessment</span>
+          </Link>
+          <Link
+            to="/evaluations#department"
+            className="flex flex-col items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-3 text-white shadow-sm hover:bg-amber-700 active:bg-amber-800 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" /></svg>
+            <span className="text-xs font-semibold">Dept Eval</span>
+          </Link>
+        </div>
       </div>
     </div>
   );

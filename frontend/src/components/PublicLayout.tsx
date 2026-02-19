@@ -1,9 +1,12 @@
 import { useState } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
+import ChatWidget from './ChatWidget';
 
 const navLinks = [
+  { label: 'Tour', path: '/tour' },
   { label: 'Features', path: '/features' },
   { label: 'Pricing', path: '/pricing' },
+  { label: 'Request Demo', path: '/request-demo' },
 ];
 
 export default function PublicLayout() {
@@ -20,22 +23,17 @@ export default function PublicLayout() {
           <div className="flex items-center justify-between h-16">
             {/* Logo */}
             <Link to="/" className="flex items-center gap-2">
-              <svg
-                className="h-8 w-8 text-primary-600"
-                viewBox="0 0 32 32"
-                fill="none"
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <rect width="32" height="32" rx="8" fill="currentColor" />
-                <path
-                  d="M10 16.5L14 20.5L22 12.5"
-                  stroke="white"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span className="text-xl font-bold text-primary-600">StoreScore</span>
+              <img
+                src="https://images-media.nyc3.cdn.digitaloceanspaces.com/storescore-files/SS%20Store.png"
+                alt="StoreScore"
+                className="h-8 w-auto"
+              />
+              <div className="flex flex-col leading-tight">
+                <span className="text-xl font-bold">
+                  <span className="text-gray-700">Store</span><span className="text-primary-600">Score</span>
+                </span>
+                <span className="text-[10px] font-medium tracking-wider text-gray-400">Evaluate. Analyze. Excel.</span>
+              </div>
             </Link>
 
             {/* Desktop Navigation */}
@@ -64,10 +62,10 @@ export default function PublicLayout() {
                 Login
               </Link>
               <Link
-                to="/request-demo"
+                to="/signup"
                 className="inline-flex items-center px-4 py-2 text-sm font-semibold text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors shadow-sm"
               >
-                Request Demo
+                Sign Up Free
               </Link>
             </div>
 
@@ -127,11 +125,11 @@ export default function PublicLayout() {
                   Login
                 </Link>
                 <Link
-                  to="/request-demo"
+                  to="/signup"
                   onClick={() => setMobileMenuOpen(false)}
                   className="block px-3 py-2 rounded-lg text-sm font-semibold text-center text-white bg-primary-600 hover:bg-primary-700 transition-colors"
                 >
-                  Request Demo
+                  Sign Up Free
                 </Link>
               </div>
             </div>
@@ -144,6 +142,9 @@ export default function PublicLayout() {
         <Outlet />
       </main>
 
+      {/* Chat Widget */}
+      <ChatWidget />
+
       {/* Footer */}
       <footer className="bg-gray-50 border-t border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
@@ -151,22 +152,17 @@ export default function PublicLayout() {
             {/* Brand */}
             <div className="col-span-1 md:col-span-2">
               <Link to="/" className="flex items-center gap-2 mb-3">
-                <svg
-                  className="h-7 w-7 text-primary-600"
-                  viewBox="0 0 32 32"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <rect width="32" height="32" rx="8" fill="currentColor" />
-                  <path
-                    d="M10 16.5L14 20.5L22 12.5"
-                    stroke="white"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                <span className="text-lg font-bold text-primary-600">StoreScore</span>
+                <img
+                  src="https://images-media.nyc3.cdn.digitaloceanspaces.com/storescore-files/SS%20Store.png"
+                  alt="StoreScore"
+                  className="h-7 w-auto"
+                />
+                <div className="flex flex-col leading-tight">
+                  <span className="text-lg font-bold">
+                    <span className="text-gray-700">Store</span><span className="text-primary-600">Score</span>
+                  </span>
+                  <span className="text-[9px] font-medium tracking-wider text-gray-400">Evaluate. Analyze. Excel.</span>
+                </div>
               </Link>
               <p className="text-sm text-gray-500 max-w-sm">
                 StoreScore — Store Quality Management. Streamline evaluations, drive consistency,
@@ -178,6 +174,11 @@ export default function PublicLayout() {
             <div>
               <h4 className="text-sm font-semibold text-gray-900 mb-3">Product</h4>
               <ul className="space-y-2">
+                <li>
+                  <Link to="/tour" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                    Product Tour
+                  </Link>
+                </li>
                 <li>
                   <Link to="/features" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
                     Features
@@ -206,8 +207,8 @@ export default function PublicLayout() {
                   </Link>
                 </li>
                 <li>
-                  <Link to="/request-demo" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
-                    Get Started
+                  <Link to="/signup" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                    Sign Up Free
                   </Link>
                 </li>
               </ul>

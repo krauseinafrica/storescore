@@ -4,12 +4,13 @@ import math
 import uuid
 from datetime import datetime, timedelta
 
+from django.db.models import F
 from django.http import HttpResponse
 from django.utils import timezone as dj_timezone
 from PIL import Image
 from rest_framework import status
 from rest_framework.decorators import action
-from rest_framework.parsers import FormParser, MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -21,12 +22,14 @@ from apps.core.storage import process_uploaded_image
 
 from .models import (
     ActionItem,
+    ActionItemEvent,
     ActionItemPhoto,
     ActionItemResponse,
     AssessmentSubmission,
     CalendarToken,
     CorrectiveAction,
     Criterion,
+    CriterionReferenceImage,
     Department,
     DepartmentType,
     Driver,
@@ -44,12 +47,15 @@ from .models import (
     WalkSectionNote,
 )
 from .serializers import (
+    ActionItemCreateSerializer,
     ActionItemDetailSerializer,
     ActionItemListSerializer,
     ActionItemResponseSerializer,
     AssessmentSubmissionSerializer,
     CalendarTokenSerializer,
+    CorrectiveActionCreateSerializer,
     CorrectiveActionListSerializer,
+    CriterionReferenceImageSerializer,
     DepartmentDetailSerializer,
     DepartmentListSerializer,
     DepartmentTypeDetailSerializer,
@@ -119,7 +125,7 @@ class ScoringTemplateViewSet(ModelViewSet):
     def get_queryset(self):
         queryset = ScoringTemplate.objects.filter(
             organization=self.request.org,
-        ).prefetch_related('sections__criteria__drivers')
+        ).prefetch_related('sections__criteria__drivers', 'sections__criteria__reference_images')
 
         is_active = self.request.query_params.get('is_active')
         if is_active is not None:
@@ -144,6 +150,13 @@ class ScoringTemplateViewSet(ModelViewSet):
                 'Editing templates requires an Enterprise plan.'
             )
         serializer.save()
+
+    def perform_destroy(self, instance):
+        """Soft-delete: mark inactive instead of hard-deleting."""
+        instance.is_active = False
+        instance.save(update_fields=['is_active'])
+        # Deactivate evaluation schedules using this template
+        EvaluationSchedule.objects.filter(template=instance, is_active=True).update(is_active=False)
 
     @action(detail=True, methods=['post'], url_path='duplicate')
     def duplicate(self, request, pk=None):
@@ -198,6 +211,21 @@ class ScoringTemplateViewSet(ModelViewSet):
                         order=driver.order,
                         is_active=True,
                     )
+                # Clone reference images
+                for ref_image in criterion.reference_images.all():
+                    from django.core.files.base import ContentFile
+                    new_ref = CriterionReferenceImage(
+                        criterion=new_criterion,
+                        description=ref_image.description,
+                    )
+                    if ref_image.image:
+                        image_content = ref_image.image.read()
+                        new_ref.image.save(
+                            ref_image.image.name.split('/')[-1],
+                            ContentFile(image_content),
+                            save=False,
+                        )
+                    new_ref.save()
 
         serializer = ScoringTemplateDetailSerializer(new_template)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
@@ -232,12 +260,14 @@ class WalkViewSet(ModelViewSet):
             queryset = queryset.filter(store_id__in=accessible_ids)
 
         # Filter by walk type: 'standard' (default), 'department', or 'all'
-        walk_type = self.request.query_params.get('walk_type', 'standard')
-        if walk_type == 'standard':
-            queryset = queryset.filter(department__isnull=True)
-        elif walk_type == 'department':
-            queryset = queryset.filter(department__isnull=False)
-        # walk_type == 'all' returns everything
+        # Skip this filter on detail views (retrieve/update/delete) so any walk is accessible by ID
+        if self.action == 'list':
+            walk_type = self.request.query_params.get('walk_type', 'standard')
+            if walk_type == 'standard':
+                queryset = queryset.filter(department__isnull=True)
+            elif walk_type == 'department':
+                queryset = queryset.filter(department__isnull=False)
+            # walk_type == 'all' returns everything
 
         # Optional filters
         store = self.request.query_params.get('store')
@@ -483,8 +513,22 @@ class WalkViewSet(ModelViewSet):
         from .tasks import process_walk_completion
         process_walk_completion.delay(str(walk.id), recipient_emails)
 
+        # Check achievements (gamification)
+        newly_awarded_achievements = []
+        try:
+            from apps.stores.achievements import check_achievements_for_walk
+            awards = check_achievements_for_walk(walk)
+            if awards:
+                from apps.stores.serializers import AwardedAchievementSerializer
+                newly_awarded_achievements = AwardedAchievementSerializer(awards, many=True).data
+        except Exception as e:
+            logger.warning(f'Achievement check failed for walk {walk.id}: {e}')
+
         serializer = WalkDetailSerializer(walk, context={'request': request})
-        return Response(serializer.data)
+        response_data = serializer.data
+        if newly_awarded_achievements:
+            response_data['newly_awarded_achievements'] = newly_awarded_achievements
+        return Response(response_data)
 
     @action(detail=True, methods=['post'], url_path='manager-review')
     def manager_review(self, request, pk=None):
@@ -835,6 +879,135 @@ class WalkSectionNoteView(APIView):
         return Response(WalkSectionNoteSerializer(note).data, status=200)
 
 
+class CriterionReferenceImageView(APIView):
+    """
+    GET/POST /api/v1/walks/criteria/{criterion_id}/reference-images/
+    DELETE   /api/v1/walks/criteria/{criterion_id}/reference-images/{image_id}/
+
+    Manage the ideal reference image for a criterion.
+    Enterprise feature — gated by ai_photo_analysis.
+    """
+    permission_classes = [IsAuthenticated, IsOrgAdmin]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def _get_criterion(self, request, criterion_id):
+        """Fetch criterion and validate it belongs to the request org."""
+        try:
+            criterion = Criterion.objects.select_related(
+                'section__template__organization',
+                'section__department__organization',
+            ).get(id=criterion_id)
+        except Criterion.DoesNotExist:
+            return None, Response({'detail': 'Criterion not found.'}, status=404)
+
+        if criterion.section.template:
+            org = criterion.section.template.organization
+        elif criterion.section.department:
+            org = criterion.section.department.organization
+        else:
+            return None, Response({'detail': 'Criterion has no parent organization.'}, status=400)
+
+        if org.id != request.org.id:
+            return None, Response({'detail': 'Criterion not found.'}, status=404)
+
+        return criterion, None
+
+    def get(self, request, criterion_id):
+        criterion, error = self._get_criterion(request, criterion_id)
+        if error:
+            return error
+        images = criterion.reference_images.all()
+        return Response(CriterionReferenceImageSerializer(images, many=True).data)
+
+    def post(self, request, criterion_id):
+        if not HasFeature('ai_photo_analysis').has_permission(request, self):
+            return Response(
+                {'detail': 'Reference images require an Enterprise plan.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        criterion, error = self._get_criterion(request, criterion_id)
+        if error:
+            return error
+
+        image_file = request.FILES.get('image')
+        if not image_file:
+            return Response({'detail': 'No image provided.'}, status=400)
+
+        description = request.data.get('description', '')
+
+        # Process the image (resize/compress)
+        processed = process_uploaded_image(image_file)
+
+        # Replace existing reference image if one exists
+        existing = criterion.reference_images.first()
+        if existing:
+            existing.image.delete(save=False)
+            existing.image.save(processed.name, processed, save=False)
+            existing.description = description
+            existing.save()
+            ref_image = existing
+        else:
+            ref_image = CriterionReferenceImage(
+                criterion=criterion,
+                description=description,
+            )
+            ref_image.image.save(processed.name, processed, save=True)
+
+        return Response(
+            CriterionReferenceImageSerializer(ref_image).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    def patch(self, request, criterion_id, image_id=None):
+        """Update the description of an existing reference image without re-uploading."""
+        criterion, error = self._get_criterion(request, criterion_id)
+        if error:
+            return error
+
+        if image_id:
+            try:
+                ref_image = criterion.reference_images.get(id=image_id)
+            except CriterionReferenceImage.DoesNotExist:
+                return Response({'detail': 'Reference image not found.'}, status=404)
+        else:
+            ref_image = criterion.reference_images.first()
+            if not ref_image:
+                return Response({'detail': 'No reference image to update.'}, status=404)
+
+        description = request.data.get('description')
+        if description is not None:
+            ref_image.description = description
+            ref_image.save(update_fields=['description'])
+
+        return Response(CriterionReferenceImageSerializer(ref_image).data)
+
+    def delete(self, request, criterion_id, image_id=None):
+        if not HasFeature('ai_photo_analysis').has_permission(request, self):
+            return Response(
+                {'detail': 'Reference images require an Enterprise plan.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        criterion, error = self._get_criterion(request, criterion_id)
+        if error:
+            return error
+
+        if image_id:
+            try:
+                ref_image = criterion.reference_images.get(id=image_id)
+            except CriterionReferenceImage.DoesNotExist:
+                return Response({'detail': 'Reference image not found.'}, status=404)
+        else:
+            ref_image = criterion.reference_images.first()
+            if not ref_image:
+                return Response({'detail': 'No reference image to delete.'}, status=404)
+
+        ref_image.image.delete(save=False)
+        ref_image.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
 class AnalyzePhotoView(APIView):
     """
     POST /api/v1/walks/analyze-photo/
@@ -858,6 +1031,7 @@ class AnalyzePhotoView(APIView):
         criterion_name = request.data.get('criterion_name', '')
         section_name = request.data.get('section_name', '')
         evaluator_notes = request.data.get('caption', '').strip()
+        criterion_id = request.data.get('criterion_id', '')
 
         # Read image bytes and determine media type
         image_bytes = image_file.read()
@@ -873,24 +1047,42 @@ class AnalyzePhotoView(APIView):
                 status=503,
             )
 
-        # Build context prompt
-        context_parts = []
-        if section_name:
-            context_parts.append(f'Section: {section_name}')
-        if criterion_name:
-            context_parts.append(f'Criterion: {criterion_name}')
-        context = ', '.join(context_parts) if context_parts else 'General store observation'
+        # Fetch reference image and scoring guidance if criterion_id provided
+        reference_image = None
+        scoring_guidance_context = ''
+        if criterion_id:
+            try:
+                criterion_obj = Criterion.objects.prefetch_related(
+                    'reference_images',
+                ).get(id=criterion_id)
+                reference_image = criterion_obj.reference_images.first()
+                if not criterion_name:
+                    criterion_name = criterion_obj.name
+                if criterion_obj.scoring_guidance:
+                    scoring_guidance_context = f'\n\nScoring guidance for this criterion:\n{criterion_obj.scoring_guidance}'
+            except Criterion.DoesNotExist:
+                pass
 
         evaluator_context = ''
         if evaluator_notes:
             evaluator_context = f'\n\nThe evaluator noted: "{evaluator_notes}"\nPlease incorporate their observation into your analysis and assess whether the photo supports their concern.'
+
+        # Build reference image context for the prompt
+        reference_context = ''
+
+        if reference_image:
+            ref_desc = reference_image.description
+            if ref_desc:
+                reference_context = f'\n\nYou have been provided a reference image showing the IDEAL state (score 5/5) for this criterion. The reference description: "{ref_desc}"\nCompare the store photo against this ideal reference to determine the score.'
+            else:
+                reference_context = '\n\nYou have been provided a reference image showing the IDEAL state (score 5/5) for this criterion. Compare the store photo against this ideal reference to determine the score.'
 
         prompt = f"""You are analyzing a photo for a retail store quality walk-through evaluation.
 
 You are specifically evaluating: {criterion_name or 'General observation'}
 Store area category: {section_name or 'General'}
 Note: Category names describe the evaluation topic, not literal objects. For example "Curb Appeal" means the store's overall exterior appearance and first impression, not an actual curb.
-{evaluator_context}
+{evaluator_context}{scoring_guidance_context}{reference_context}
 
 Provide your response in exactly this format:
 SCORE: [number 1-5]
@@ -902,26 +1094,60 @@ Keep the analysis concise and actionable. Do not use markdown headers or bullet 
         try:
             image_b64 = base64.standard_b64encode(image_bytes).decode('utf-8')
 
+            # Build content array — reference image first (if any), then the store photo
+            content_blocks = []
+
+            if reference_image:
+                try:
+                    ref_image_bytes = reference_image.image.read()
+                    ref_b64 = base64.standard_b64encode(ref_image_bytes).decode('utf-8')
+                    ref_label = f'Reference image (IDEAL - 5/5)'
+                    if reference_image.description:
+                        ref_label += f': {reference_image.description}'
+                    content_blocks.append({
+                        'type': 'text',
+                        'text': ref_label,
+                    })
+                    content_blocks.append({
+                        'type': 'image',
+                        'source': {
+                            'type': 'base64',
+                            'media_type': 'image/jpeg',
+                            'data': ref_b64,
+                        },
+                    })
+                except Exception:
+                    logger.warning('Failed to read reference image, proceeding without it.')
+
+            if reference_image:
+                content_blocks.append({
+                    'type': 'text',
+                    'text': 'Photo to evaluate:',
+                })
+
+            content_blocks.append({
+                'type': 'image',
+                'source': {
+                    'type': 'base64',
+                    'media_type': content_type,
+                    'data': image_b64,
+                },
+            })
+            content_blocks.append({
+                'type': 'text',
+                'text': prompt,
+            })
+
+            # Filter out empty text blocks
+            content_blocks = [b for b in content_blocks if not (b['type'] == 'text' and not b['text'])]
+
             client = anthropic.Anthropic(api_key=django_settings.ANTHROPIC_API_KEY)
             message = client.messages.create(
                 model='claude-sonnet-4-5-20250929',
-                max_tokens=300,
+                max_tokens=400,
                 messages=[{
                     'role': 'user',
-                    'content': [
-                        {
-                            'type': 'image',
-                            'source': {
-                                'type': 'base64',
-                                'media_type': content_type,
-                                'data': image_b64,
-                            },
-                        },
-                        {
-                            'type': 'text',
-                            'text': prompt,
-                        },
-                    ],
+                    'content': content_blocks,
                 }],
             )
 
@@ -1072,7 +1298,7 @@ class CalendarFeedView(APIView):
 
 class ActionItemViewSet(ModelViewSet):
     """CRUD for action items with role-based access. Pro+ feature."""
-    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
@@ -1080,22 +1306,28 @@ class ActionItemViewSet(ModelViewSet):
         return [IsAuthenticated(), IsOrgManagerOrAbove(), HasFeature('action_items')]
 
     def get_serializer_class(self):
+        if self.action == 'create':
+            return ActionItemCreateSerializer
         if self.action == 'list':
             return ActionItemListSerializer
         return ActionItemDetailSerializer
 
     def get_queryset(self):
+        from django.db.models import Q
+
         queryset = ActionItem.objects.filter(
             organization=self.request.org,
         ).select_related(
-            'walk__store', 'criterion', 'score',
+            'walk__store', 'criterion', 'score', 'store',
             'assigned_to', 'created_by', 'original_photo',
         )
 
-        # Apply store-level scoping
+        # Apply store-level scoping (walk-based OR direct store)
         accessible_ids = get_accessible_store_ids(self.request)
         if accessible_ids is not None:
-            queryset = queryset.filter(walk__store_id__in=accessible_ids)
+            queryset = queryset.filter(
+                Q(walk__store_id__in=accessible_ids) | Q(store_id__in=accessible_ids)
+            )
 
         # Filters
         item_status = self.request.query_params.get('status')
@@ -1108,7 +1340,9 @@ class ActionItemViewSet(ModelViewSet):
 
         store = self.request.query_params.get('store')
         if store:
-            queryset = queryset.filter(walk__store_id=store)
+            queryset = queryset.filter(
+                Q(walk__store_id=store) | Q(store_id=store)
+            )
 
         walk = self.request.query_params.get('walk')
         if walk:
@@ -1123,17 +1357,48 @@ class ActionItemViewSet(ModelViewSet):
 
         return queryset
 
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=self.request.org,
+            created_by=self.request.user,
+            is_manual=True,
+            status=ActionItem.Status.OPEN,
+        )
+
     def perform_update(self, serializer):
         from django.utils import timezone
         instance = serializer.instance
         new_status = serializer.validated_data.get('status')
-        if new_status == ActionItem.Status.RESOLVED and instance.status != ActionItem.Status.RESOLVED:
+        old_status = instance.status
+
+        # Direct status change to resolved should go to pending_review
+        if new_status in (ActionItem.Status.RESOLVED, ActionItem.Status.PENDING_REVIEW) and old_status not in (
+            ActionItem.Status.RESOLVED, ActionItem.Status.PENDING_REVIEW, ActionItem.Status.APPROVED,
+        ):
             serializer.save(
+                status=ActionItem.Status.PENDING_REVIEW,
                 resolved_at=timezone.now(),
                 resolved_by=self.request.user,
             )
+            ActionItemEvent.objects.create(
+                action_item=instance,
+                organization=self.request.org,
+                event_type=ActionItemEvent.EventType.SUBMITTED_FOR_REVIEW,
+                actor=self.request.user,
+                old_status=old_status,
+                new_status='pending_review',
+            )
         else:
             serializer.save()
+            if new_status and new_status != old_status:
+                ActionItemEvent.objects.create(
+                    action_item=instance,
+                    organization=self.request.org,
+                    event_type=ActionItemEvent.EventType.STATUS_CHANGED,
+                    actor=self.request.user,
+                    old_status=old_status,
+                    new_status=new_status,
+                )
 
     @action(detail=True, methods=['post'], url_path='respond')
     def submit_response(self, request, pk=None):
@@ -1255,6 +1520,195 @@ STATUS: [RESOLVED or NEEDS_MORE_WORK]
             'ai_analysis': ai_analysis,
         })
 
+    @action(
+        detail=True, methods=['post'], url_path='resolve-with-photo',
+        parser_classes=[MultiPartParser, FormParser],
+    )
+    def resolve_with_photo(self, request, pk=None):
+        """
+        Resolve an action item by uploading a completion photo.
+        No AI analysis on the completion photo.
+        Emails the regional manager with the photo for sign-off.
+        """
+        from django.utils import timezone as tz
+
+        action_item = self.get_object()
+        image_file = request.FILES.get('image')
+        if not image_file:
+            return Response({'detail': 'A completion photo is required.'}, status=400)
+
+        notes = request.data.get('notes', 'Completed — photo evidence attached.')
+
+        # Create response with photo
+        response_obj = ActionItemResponse.objects.create(
+            action_item=action_item,
+            submitted_by=request.user,
+            organization=request.org,
+            notes=notes,
+        )
+
+        processed = process_uploaded_image(image_file)
+        photo = ActionItemPhoto(
+            response=response_obj,
+            organization=request.org,
+            caption='Completion photo',
+        )
+        photo.image.save(processed.name, processed, save=True)
+
+        # Mark as pending review (awaiting reviewer sign-off)
+        action_item.status = ActionItem.Status.PENDING_REVIEW
+        action_item.resolved_at = tz.now()
+        action_item.resolved_by = request.user
+        action_item.save(update_fields=['status', 'resolved_at', 'resolved_by'])
+
+        # Create timeline event
+        ActionItemEvent.objects.create(
+            action_item=action_item,
+            organization=request.org,
+            event_type=ActionItemEvent.EventType.SUBMITTED_FOR_REVIEW,
+            actor=request.user,
+            old_status='in_progress',
+            new_status='pending_review',
+            notes=notes,
+        )
+
+        # Email regional manager for sign-off
+        from .services import send_action_item_completion_notification
+        send_action_item_completion_notification(action_item, photo, request.user)
+
+        return Response({
+            'status': 'pending_review',
+            'photo_id': str(photo.id),
+            'resolved_at': action_item.resolved_at.isoformat(),
+        })
+
+    @action(detail=True, methods=['post'], url_path='sign-off')
+    def sign_off(self, request, pk=None):
+        """Approve a resolved action item. Reviewer signs off on the resolution."""
+        from django.utils import timezone as tz
+
+        action_item = self.get_object()
+
+        if action_item.status != ActionItem.Status.PENDING_REVIEW:
+            return Response(
+                {'detail': 'Only items pending review can be signed off.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Block self-review
+        if action_item.resolved_by == request.user:
+            return Response(
+                {'detail': 'You cannot sign off on your own resolution.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Check reviewer has appropriate role
+        membership = getattr(request, 'membership', None)
+        if not membership or membership.role not in ('regional_manager', 'admin', 'owner'):
+            return Response(
+                {'detail': 'Only regional managers, admins, or owners can sign off.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        notes = request.data.get('notes', '')
+
+        action_item.status = ActionItem.Status.APPROVED
+        action_item.reviewed_by = request.user
+        action_item.reviewed_at = tz.now()
+        action_item.review_notes = notes
+        action_item.save(update_fields=[
+            'status', 'reviewed_by', 'reviewed_at', 'review_notes',
+        ])
+
+        ActionItemEvent.objects.create(
+            action_item=action_item,
+            organization=request.org,
+            event_type=ActionItemEvent.EventType.APPROVED,
+            actor=request.user,
+            old_status='pending_review',
+            new_status='approved',
+            notes=notes,
+        )
+
+        # Notify the resolver that their work was approved
+        from .services import send_action_item_approved_notification
+        send_action_item_approved_notification(action_item, request.user)
+
+        return Response({
+            'status': 'approved',
+            'reviewed_at': action_item.reviewed_at.isoformat(),
+        })
+
+    @action(detail=True, methods=['post'], url_path='push-back')
+    def push_back(self, request, pk=None):
+        """Reject a resolution and send it back for rework with feedback."""
+        action_item = self.get_object()
+
+        if action_item.status != ActionItem.Status.PENDING_REVIEW:
+            return Response(
+                {'detail': 'Only items pending review can be pushed back.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if action_item.resolved_by == request.user:
+            return Response(
+                {'detail': 'You cannot push back your own resolution.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        membership = getattr(request, 'membership', None)
+        if not membership or membership.role not in ('regional_manager', 'admin', 'owner'):
+            return Response(
+                {'detail': 'Only regional managers, admins, or owners can push back.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        notes = request.data.get('notes', '')
+        if not notes.strip():
+            return Response(
+                {'detail': 'Feedback notes are required when pushing back.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Reopen the item
+        action_item.status = ActionItem.Status.IN_PROGRESS
+        action_item.resolved_at = None
+        action_item.resolved_by = None
+        action_item.reviewed_by = None
+        action_item.reviewed_at = None
+        action_item.review_notes = ''
+        action_item.save(update_fields=[
+            'status', 'resolved_at', 'resolved_by',
+            'reviewed_by', 'reviewed_at', 'review_notes',
+        ])
+
+        ActionItemEvent.objects.create(
+            action_item=action_item,
+            organization=request.org,
+            event_type=ActionItemEvent.EventType.REJECTED,
+            actor=request.user,
+            old_status='pending_review',
+            new_status='in_progress',
+            notes=notes,
+        )
+
+        # Add push-back notes as a response so it appears in the conversation
+        ActionItemResponse.objects.create(
+            action_item=action_item,
+            submitted_by=request.user,
+            organization=request.org,
+            notes=f'Push-back: {notes}',
+        )
+
+        # Notify the assigned user
+        from .services import send_action_item_pushback_notification
+        send_action_item_pushback_notification(action_item, request.user, notes)
+
+        return Response({
+            'status': 'in_progress',
+            'detail': 'Item pushed back for rework.',
+        })
+
 
 # ==================== Feature 3: Self-Assessments ====================
 
@@ -1286,14 +1740,19 @@ class SelfAssessmentTemplateViewSet(ModelViewSet):
 
 class SelfAssessmentViewSet(ModelViewSet):
     """CRUD for self-assessment instances. Pro+ feature."""
-    http_method_names = ['get', 'post', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'delete', 'head', 'options']
 
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
             return [IsAuthenticated(), IsOrgMember(), HasFeature('self_assessments')]
-        if self.action == 'create':
+        if self.action in ('create', 'destroy'):
             return [IsAuthenticated(), IsOrgAdmin(), HasFeature('self_assessments')]
         return [IsAuthenticated(), IsOrgManagerOrAbove(), HasFeature('self_assessments')]
+
+    def perform_destroy(self, instance):
+        """Mark linked action items as orphaned before deleting the assessment."""
+        instance.action_items.update(assessment=None, assessment_removed=True)
+        instance.delete()
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -1362,6 +1821,131 @@ class SelfAssessmentViewSet(ModelViewSet):
 
         return Response(SelfAssessmentDetailSerializer(assessment).data)
 
+    @action(detail=True, methods=['post'], url_path='create-action-items')
+    def create_action_items(self, request, pk=None):
+        """Create action items from AI-suggested findings on an assessment.
+        Expects: { "items": [{ "description": "...", "priority": "high|medium|low" }] }
+        """
+        assessment = self.get_object()
+        items_data = request.data.get('items', [])
+        if not items_data:
+            return Response(
+                {'detail': 'No action items provided.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        from datetime import timedelta
+        from django.utils import timezone
+
+        # Use org-level configurable deadlines, with fallback defaults
+        from apps.stores.models import OrgSettings
+        try:
+            org_settings = OrgSettings.objects.get(organization=request.org)
+            PRIORITY_DUE_DAYS = {
+                'critical': org_settings.action_item_deadline_critical,
+                'high': org_settings.action_item_deadline_high,
+                'medium': org_settings.action_item_deadline_medium,
+                'low': org_settings.action_item_deadline_low,
+            }
+        except OrgSettings.DoesNotExist:
+            PRIORITY_DUE_DAYS = {
+                'critical': 1,
+                'high': 3,
+                'medium': 7,
+                'low': 14,
+            }
+
+        # Find store manager to assign to
+        from apps.accounts.models import StoreAssignment
+        assignment = StoreAssignment.objects.filter(
+            store=assessment.store,
+            membership__organization=request.org,
+            membership__role__in=['store_manager', 'manager'],
+        ).select_related('membership__user').first()
+        assigned_to = assignment.membership.user if assignment else None
+
+        created = []
+        for item_data in items_data:
+            priority = item_data.get('priority', 'medium').lower()
+            if priority not in PRIORITY_DUE_DAYS:
+                priority = 'medium'
+            due_days = PRIORITY_DUE_DAYS[priority]
+
+            action_item = ActionItem.objects.create(
+                organization=request.org,
+                assessment=assessment,
+                store=assessment.store,
+                assigned_to=assigned_to,
+                created_by=request.user,
+                status='open',
+                priority=priority,
+                description=item_data.get('description', ''),
+                due_date=(timezone.now() + timedelta(days=due_days)).date(),
+                is_manual=False,
+            )
+            created.append({
+                'id': str(action_item.id),
+                'description': action_item.description,
+                'priority': action_item.priority,
+                'due_date': str(action_item.due_date),
+                'assigned_to_name': assigned_to.full_name if assigned_to else None,
+            })
+
+        # Send email notification to the assigned store manager
+        from .services import send_action_items_notification
+        if assigned_to:
+            send_action_items_notification(assessment, created, assigned_to)
+
+        return Response({'created': created, 'count': len(created)}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='review')
+    def review_assessment(self, request, pk=None):
+        """
+        Allow evaluator/reviewer to override AI ratings and add commentary
+        on individual submissions. Also marks assessment as 'reviewed'.
+        Expects: { "submissions": [{ "id": "...", "reviewer_rating": "good|fair|poor", "reviewer_notes": "..." }] }
+        """
+        from django.utils import timezone
+
+        assessment = self.get_object()
+        submissions_data = request.data.get('submissions', [])
+
+        updated = []
+        for sub_data in submissions_data:
+            sub_id = sub_data.get('id')
+            if not sub_id:
+                continue
+            try:
+                submission = assessment.submissions.get(id=sub_id)
+            except AssessmentSubmission.DoesNotExist:
+                continue
+
+            changed = False
+            if 'reviewer_rating' in sub_data:
+                submission.reviewer_rating = sub_data['reviewer_rating']
+                changed = True
+            if 'reviewer_notes' in sub_data:
+                submission.reviewer_notes = sub_data['reviewer_notes']
+                changed = True
+            if changed:
+                submission.reviewed_by = request.user
+                submission.reviewed_at = timezone.now()
+                submission.save(update_fields=[
+                    'reviewer_rating', 'reviewer_notes',
+                    'reviewed_by', 'reviewed_at',
+                ])
+                updated.append(str(sub_id))
+
+        # Mark assessment as reviewed
+        if assessment.status == 'submitted':
+            assessment.status = 'reviewed'
+            assessment.save(update_fields=['status'])
+
+        return Response({
+            'updated': updated,
+            'assessment_status': assessment.status,
+        })
+
 
 # ==================== Corrective Actions ====================
 
@@ -1369,13 +1953,17 @@ class SelfAssessmentViewSet(ModelViewSet):
 class CorrectiveActionViewSet(ModelViewSet):
     """
     List and resolve corrective actions (overdue evaluations, unacknowledged walks).
-    Pro+ feature. Admin+ can view; PATCH to resolve.
+    Pro+ feature. Admin+ can view; PATCH to resolve; POST to create manual.
     """
-    serializer_class = CorrectiveActionListSerializer
-    http_method_names = ['get', 'patch', 'head', 'options']
+    http_method_names = ['get', 'post', 'patch', 'head', 'options']
 
     def get_permissions(self):
         return [IsAuthenticated(), IsOrgManagerOrAbove(), HasFeature('corrective_actions')]
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return CorrectiveActionCreateSerializer
+        return CorrectiveActionListSerializer
 
     def get_queryset(self):
         queryset = CorrectiveAction.objects.filter(
@@ -1403,6 +1991,15 @@ class CorrectiveActionViewSet(ModelViewSet):
             queryset = queryset.filter(store_id=store)
 
         return queryset.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        serializer.save(
+            organization=self.request.org,
+            action_type=CorrectiveAction.ActionType.MANUAL,
+            is_manual=True,
+            status=CorrectiveAction.Status.OPEN,
+            days_overdue=0,
+        )
 
     def perform_update(self, serializer):
         from django.utils import timezone
@@ -1568,7 +2165,7 @@ class AssessmentSubmissionView(APIView):
         if not HasFeature('self_assessments').has_permission(request, self):
             from rest_framework.exceptions import PermissionDenied
             raise PermissionDenied('Self-assessments require a Pro or Enterprise plan.')
-    parser_classes = [MultiPartParser, FormParser]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, assessment_id):
         try:
@@ -1584,25 +2181,84 @@ class AssessmentSubmissionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        image_file = request.FILES.get('image')
-        if not image_file:
-            return Response({'detail': 'No image provided.'}, status=400)
+        upload_file = request.FILES.get('image')
+        if not upload_file:
+            return Response({'detail': 'No file provided.'}, status=400)
 
         prompt_id = request.data.get('prompt')
         if not prompt_id:
             return Response({'detail': 'Prompt ID is required.'}, status=400)
 
-        processed = process_uploaded_image(image_file)
+        # Detect if this is a video upload
+        content_type = upload_file.content_type or ''
+        is_video = content_type in AssessmentSubmission.ALLOWED_VIDEO_TYPES
+
+        if is_video and upload_file.size > AssessmentSubmission.MAX_VIDEO_SIZE:
+            return Response(
+                {'detail': 'Video must be under 100 MB.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Replace existing submission for the same prompt if re-uploading
+        existing = AssessmentSubmission.objects.filter(
+            assessment=assessment, prompt_id=prompt_id,
+        ).first()
+        if existing:
+            # Delete old file
+            if existing.image:
+                existing.image.delete(save=False)
+            existing.delete()
+
         submission = AssessmentSubmission(
             assessment=assessment,
             prompt_id=prompt_id,
             organization=request.org,
             caption=request.data.get('caption', ''),
             self_rating=request.data.get('self_rating', ''),
+            is_video=is_video,
         )
-        submission.image.save(processed.name, processed, save=True)
+
+        if is_video:
+            submission.image.save(upload_file.name, upload_file, save=True)
+        else:
+            processed = process_uploaded_image(upload_file)
+            submission.image.save(processed.name, processed, save=True)
 
         return Response(AssessmentSubmissionSerializer(submission).data, status=201)
+
+    def patch(self, request, assessment_id):
+        """Update self_rating or caption on an existing submission."""
+        try:
+            assessment = SelfAssessment.objects.get(
+                id=assessment_id, organization=request.org,
+            )
+        except SelfAssessment.DoesNotExist:
+            return Response({'detail': 'Not found.'}, status=404)
+
+        if assessment.status != SelfAssessment.Status.PENDING:
+            return Response(
+                {'detail': 'Assessment has already been submitted.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        submission_id = request.data.get('submission_id')
+        if not submission_id:
+            return Response({'detail': 'submission_id is required.'}, status=400)
+
+        try:
+            submission = AssessmentSubmission.objects.get(
+                id=submission_id, assessment=assessment,
+            )
+        except AssessmentSubmission.DoesNotExist:
+            return Response({'detail': 'Submission not found.'}, status=404)
+
+        if 'self_rating' in request.data:
+            submission.self_rating = request.data['self_rating']
+        if 'caption' in request.data:
+            submission.caption = request.data['caption']
+        submission.save(update_fields=['self_rating', 'caption'])
+
+        return Response(AssessmentSubmissionSerializer(submission).data)
 
 
 # ==================== Departments ====================
@@ -1685,7 +2341,7 @@ class DepartmentTypeViewSet(ModelViewSet):
                 )
 
         DepartmentType.objects.filter(pk=dept_type.pk).update(
-            install_count=models.F('install_count') + 1,
+            install_count=F('install_count') + 1,
         )
 
         serializer = DepartmentDetailSerializer(department)
@@ -1773,55 +2429,67 @@ class IndustryTemplateViewSet(ModelViewSet):
         POST /walks/library/{id}/install/
         Returns the newly created ScoringTemplate.
         """
-        industry_template = self.get_object()
-        org = request.org
-        structure = industry_template.structure or {}
-        sections_data = structure.get('sections', [])
+        import traceback as tb
+        try:
+            industry_template = self.get_object()
+            org = request.org
+            structure = industry_template.structure or {}
+            sections_data = structure.get('sections', [])
 
-        # Create the ScoringTemplate
-        scoring_template = ScoringTemplate.objects.create(
-            organization=org,
-            name=industry_template.name,
-            is_active=True,
-            source_industry_template=industry_template,
-        )
-
-        # Deep-clone sections → criteria → drivers
-        from apps.walks.models import Criterion as CriterionModel, Driver as DriverModel
-        for sec_data in sections_data:
-            section = Section.objects.create(
-                template=scoring_template,
-                name=sec_data.get('name', ''),
-                order=sec_data.get('order', 0),
-                weight=sec_data.get('weight', '0.00'),
+            # Create the ScoringTemplate
+            scoring_template = ScoringTemplate.objects.create(
+                organization=org,
+                name=industry_template.name,
+                is_active=True,
+                source_industry_template=industry_template,
             )
-            for crit_data in sec_data.get('criteria', []):
-                criterion = CriterionModel.objects.create(
-                    section=section,
-                    name=crit_data.get('name', ''),
-                    description=crit_data.get('description', ''),
-                    order=crit_data.get('order', 0),
-                    max_points=crit_data.get('max_points', 5),
-                    sop_text=crit_data.get('sop_text', ''),
-                    sop_url=crit_data.get('sop_url', ''),
-                    scoring_guidance=crit_data.get('scoring_guidance', ''),
+
+            # Deep-clone sections → criteria → drivers
+            from apps.walks.models import Criterion as CriterionModel, Driver as DriverModel
+            for sec_idx, sec_data in enumerate(sections_data):
+                section = Section.objects.create(
+                    template=scoring_template,
+                    name=sec_data.get('name') or '',
+                    order=sec_data.get('order') if sec_data.get('order') is not None else sec_idx,
+                    weight=sec_data.get('weight') or '0.00',
                 )
-                for drv_data in crit_data.get('drivers', []):
-                    DriverModel.objects.create(
-                        organization=org,
-                        criterion=criterion,
-                        name=drv_data.get('name', ''),
-                        order=drv_data.get('order', 0),
-                        is_active=True,
+                for crit_idx, crit_data in enumerate(sec_data.get('criteria', [])):
+                    criterion = CriterionModel.objects.create(
+                        section=section,
+                        name=crit_data.get('name') or '',
+                        description=crit_data.get('description') or '',
+                        order=crit_data.get('order') if crit_data.get('order') is not None else crit_idx,
+                        max_points=crit_data.get('max_points') or 5,
+                        sop_text=crit_data.get('sop_text') or '',
+                        sop_url=crit_data.get('sop_url') or '',
+                        scoring_guidance=crit_data.get('scoring_guidance') or '',
                     )
+                    for idx, drv_data in enumerate(crit_data.get('drivers', [])):
+                        # Handle both string and dict driver formats
+                        if isinstance(drv_data, str):
+                            drv_name = drv_data
+                            drv_order = idx
+                        else:
+                            drv_name = drv_data.get('name', '')
+                            drv_order = drv_data.get('order', idx)
+                        DriverModel.objects.create(
+                            organization=org,
+                            criterion=criterion,
+                            name=drv_name,
+                            order=drv_order,
+                            is_active=True,
+                        )
 
-        # Increment install count
-        IndustryTemplate.objects.filter(pk=industry_template.pk).update(
-            install_count=models.F('install_count') + 1,
-        )
+            # Increment install count
+            IndustryTemplate.objects.filter(pk=industry_template.pk).update(
+                install_count=F('install_count') + 1,
+            )
 
-        serializer = ScoringTemplateDetailSerializer(scoring_template)
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+            serializer = ScoringTemplateDetailSerializer(scoring_template)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            logger.error(f'Template install error: {tb.format_exc()}')
+            return Response({'detail': f'Install failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     @action(detail=True, methods=['post'], url_path='export')
     def export_template(self, request, pk=None):

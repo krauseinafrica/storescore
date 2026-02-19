@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import Membership, Organization, RegionAssignment, StoreAssignment, User
+from .models import Membership, Organization, RegionAssignment, StoreAssignment, SupportTicket, TicketMessage, User
 
 
 @admin.register(User)
@@ -56,3 +56,17 @@ class RegionAssignmentAdmin(admin.ModelAdmin):
 @admin.register(StoreAssignment)
 class StoreAssignmentAdmin(admin.ModelAdmin):
     list_display = ('membership', 'store', 'created_at')
+
+
+class TicketMessageInline(admin.TabularInline):
+    model = TicketMessage
+    extra = 0
+    readonly_fields = ('created_at',)
+
+
+@admin.register(SupportTicket)
+class SupportTicketAdmin(admin.ModelAdmin):
+    list_display = ('subject', 'status', 'priority', 'user', 'organization', 'created_at')
+    list_filter = ('status', 'priority')
+    search_fields = ('subject', 'user__email', 'organization__name')
+    inlines = [TicketMessageInline]

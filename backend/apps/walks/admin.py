@@ -1,8 +1,9 @@
 from django.contrib import admin
 
 from .models import (
-    CorrectiveAction, Criterion, Driver, ReportSchedule, Score,
-    ScoringTemplate, Section, SOPCriterionLink, SOPDocument, Walk,
+    CorrectiveAction, Criterion, CriterionReferenceImage, Driver,
+    ReportSchedule, Score, ScoringTemplate, Section, SOPCriterionLink,
+    SOPDocument, Walk,
 )
 
 
@@ -37,11 +38,17 @@ class SectionAdmin(admin.ModelAdmin):
     inlines = [CriterionInline]
 
 
+class CriterionReferenceImageInline(admin.TabularInline):
+    model = CriterionReferenceImage
+    extra = 0
+
+
 @admin.register(Criterion)
 class CriterionAdmin(admin.ModelAdmin):
     list_display = ('name', 'section', 'order', 'max_points')
     list_filter = ('section__template',)
     search_fields = ('name',)
+    inlines = [CriterionReferenceImageInline]
 
 
 @admin.register(Walk)

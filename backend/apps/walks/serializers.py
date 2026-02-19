@@ -4,6 +4,7 @@ from apps.accounts.serializers import UserSerializer
 
 from .models import (
     ActionItem,
+    ActionItemEvent,
     ActionItemPhoto,
     ActionItemResponse,
     AssessmentPrompt,
@@ -11,6 +12,7 @@ from .models import (
     CalendarToken,
     CorrectiveAction,
     Criterion,
+    CriterionReferenceImage,
     Department,
     DepartmentType,
     Driver,
@@ -48,18 +50,34 @@ class SOPCriterionLinkBriefSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
+class CriterionReferenceImageSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CriterionReferenceImage
+        fields = ['id', 'criterion', 'image', 'description', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
 class CriterionSerializer(serializers.ModelSerializer):
     drivers = DriverSerializer(many=True, read_only=True)
     sop_links = serializers.SerializerMethodField()
+    reference_images = serializers.SerializerMethodField()
 
     class Meta:
         model = Criterion
-        fields = ['id', 'name', 'description', 'order', 'max_points', 'sop_text', 'sop_url', 'scoring_guidance', 'drivers', 'sop_links']
+        fields = ['id', 'name', 'description', 'order', 'max_points', 'sop_text', 'sop_url', 'scoring_guidance', 'drivers', 'sop_links', 'reference_images']
         read_only_fields = ['id']
 
     def get_sop_links(self, obj):
         confirmed_links = obj.sop_links.filter(is_confirmed=True)
         return SOPCriterionLinkBriefSerializer(confirmed_links, many=True).data
+
+    def get_reference_images(self, obj):
+        # Only use prefetched data to avoid N+1 queries and to handle
+        # gracefully when the migration hasn't been applied yet.
+        cache = getattr(obj, '_prefetched_objects_cache', {})
+        if 'reference_images' in cache:
+            return CriterionReferenceImageSerializer(cache['reference_images'], many=True).data
+        return []
 
 
 class SectionSerializer(serializers.ModelSerializer):
@@ -305,6 +323,7 @@ class WalkDetailSerializer(serializers.ModelSerializer):
             return None
         sections = obj.department.sections.prefetch_related(
             'criteria__drivers', 'criteria__sop_links__sop_document',
+            'criteria__reference_images',
         ).all()
         return SectionSerializer(sections, many=True).data
 
@@ -428,22 +447,52 @@ class ActionItemResponseSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'submitted_by', 'created_at']
 
 
+class ActionItemEventSerializer(serializers.ModelSerializer):
+    actor_name = serializers.CharField(source='actor.full_name', read_only=True, default='')
+
+    class Meta:
+        model = ActionItemEvent
+        fields = [
+            'id', 'event_type', 'actor', 'actor_name', 'notes',
+            'old_status', 'new_status', 'metadata', 'created_at',
+        ]
+
+
 class ActionItemListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for listing action items."""
-    criterion_name = serializers.CharField(source='criterion.name', read_only=True)
-    store_name = serializers.CharField(source='walk.store.name', read_only=True)
+    criterion_name = serializers.SerializerMethodField()
+    store_name = serializers.SerializerMethodField()
     assigned_to_name = serializers.SerializerMethodField()
-    walk_date = serializers.DateField(source='walk.scheduled_date', read_only=True)
+    walk_date = serializers.SerializerMethodField()
     response_count = serializers.SerializerMethodField()
+    resolution_days = serializers.SerializerMethodField()
 
     class Meta:
         model = ActionItem
         fields = [
-            'id', 'walk', 'criterion_name', 'store_name', 'status',
-            'priority', 'assigned_to', 'assigned_to_name', 'walk_date',
-            'due_date', 'response_count', 'created_at',
+            'id', 'walk', 'assessment', 'assessment_removed', 'criterion_name',
+            'store_name', 'status', 'priority', 'assigned_to', 'assigned_to_name',
+            'walk_date', 'due_date', 'response_count', 'description', 'is_manual',
+            'store', 'created_at', 'reviewed_at', 'resolution_days',
         ]
         read_only_fields = fields
+
+    def get_criterion_name(self, obj):
+        if obj.criterion:
+            return obj.criterion.name
+        return obj.description[:80] if obj.description else 'Manual item'
+
+    def get_store_name(self, obj):
+        if obj.store:
+            return obj.store.name
+        if obj.walk:
+            return obj.walk.store.name
+        return None
+
+    def get_walk_date(self, obj):
+        if obj.walk:
+            return obj.walk.scheduled_date
+        return None
 
     def get_assigned_to_name(self, obj):
         if obj.assigned_to:
@@ -453,19 +502,29 @@ class ActionItemListSerializer(serializers.ModelSerializer):
     def get_response_count(self, obj):
         return obj.responses.count()
 
+    def get_resolution_days(self, obj):
+        if obj.resolved_at:
+            delta = obj.resolved_at - obj.created_at
+            return round(delta.total_seconds() / 86400, 1)
+        return None
+
 
 class ActionItemDetailSerializer(serializers.ModelSerializer):
     """Full serializer with responses and photos."""
-    criterion_name = serializers.CharField(source='criterion.name', read_only=True)
-    criterion_description = serializers.CharField(source='criterion.description', read_only=True)
-    criterion_max_points = serializers.IntegerField(source='criterion.max_points', read_only=True)
-    score_points = serializers.IntegerField(source='score.points', read_only=True)
-    store_name = serializers.CharField(source='walk.store.name', read_only=True)
-    walk_date = serializers.DateField(source='walk.scheduled_date', read_only=True)
+    criterion_name = serializers.SerializerMethodField()
+    criterion_description = serializers.SerializerMethodField()
+    criterion_max_points = serializers.SerializerMethodField()
+    score_points = serializers.SerializerMethodField()
+    store_name = serializers.SerializerMethodField()
+    walk_date = serializers.SerializerMethodField()
     assigned_to_name = serializers.SerializerMethodField()
     created_by_name = serializers.CharField(source='created_by.full_name', read_only=True)
+    resolved_by_name = serializers.SerializerMethodField()
+    reviewed_by_name = serializers.SerializerMethodField()
     original_photo_url = serializers.SerializerMethodField()
     responses = ActionItemResponseSerializer(many=True, read_only=True)
+    events = ActionItemEventSerializer(many=True, read_only=True)
+    resolution_days = serializers.SerializerMethodField()
 
     class Meta:
         model = ActionItem
@@ -475,14 +534,50 @@ class ActionItemDetailSerializer(serializers.ModelSerializer):
             'walk_date', 'original_photo', 'original_photo_url',
             'assigned_to', 'assigned_to_name', 'created_by', 'created_by_name',
             'status', 'priority', 'description', 'due_date',
-            'resolved_at', 'resolved_by', 'responses',
+            'resolved_at', 'resolved_by', 'resolved_by_name',
+            'reviewed_by', 'reviewed_by_name', 'reviewed_at', 'review_notes',
+            'responses', 'events', 'resolution_days',
+            'is_manual', 'store',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'walk', 'criterion', 'score', 'original_photo',
             'created_by', 'resolved_at', 'resolved_by',
+            'reviewed_by', 'reviewed_at', 'review_notes',
             'created_at', 'updated_at',
         ]
+
+    def get_criterion_name(self, obj):
+        if obj.criterion:
+            return obj.criterion.name
+        return obj.description[:80] if obj.description else 'Manual item'
+
+    def get_criterion_description(self, obj):
+        if obj.criterion:
+            return obj.criterion.description
+        return obj.description or ''
+
+    def get_criterion_max_points(self, obj):
+        if obj.criterion:
+            return obj.criterion.max_points
+        return None
+
+    def get_score_points(self, obj):
+        if obj.score:
+            return obj.score.points
+        return None
+
+    def get_store_name(self, obj):
+        if obj.store:
+            return obj.store.name
+        if obj.walk:
+            return obj.walk.store.name
+        return None
+
+    def get_walk_date(self, obj):
+        if obj.walk:
+            return obj.walk.scheduled_date
+        return None
 
     def get_assigned_to_name(self, obj):
         if obj.assigned_to:
@@ -494,18 +589,61 @@ class ActionItemDetailSerializer(serializers.ModelSerializer):
             return obj.original_photo.image.url
         return None
 
+    def get_resolved_by_name(self, obj):
+        if obj.resolved_by:
+            return obj.resolved_by.full_name
+        return None
+
+    def get_reviewed_by_name(self, obj):
+        if obj.reviewed_by:
+            return obj.reviewed_by.full_name
+        return None
+
+    def get_resolution_days(self, obj):
+        if obj.resolved_at:
+            delta = obj.resolved_at - obj.created_at
+            return round(delta.total_seconds() / 86400, 1)
+        return None
+
+
+class ActionItemCreateSerializer(serializers.ModelSerializer):
+    """Serializer for manually creating action items."""
+
+    class Meta:
+        model = ActionItem
+        fields = ['store', 'description', 'priority', 'assigned_to', 'due_date']
+
+    def validate_store(self, value):
+        request = self.context['request']
+        if value.organization_id != request.org.id:
+            raise serializers.ValidationError('Store does not belong to this organization.')
+        return value
+
+    def validate_description(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError('Description is required for manual items.')
+        return value.strip()
+
+    def validate_assigned_to(self, value):
+        if value:
+            request = self.context['request']
+            if not value.memberships.filter(organization=request.org).exists():
+                raise serializers.ValidationError('User is not a member of this organization.')
+        return value
+
 
 # ==================== Feature 3: Self-Assessments ====================
 
 
 class AssessmentPromptSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(required=False)
+
     class Meta:
         model = AssessmentPrompt
         fields = [
             'id', 'name', 'description', 'ai_evaluation_prompt',
             'order', 'rating_type',
         ]
-        read_only_fields = ['id']
 
 
 class SelfAssessmentTemplateListSerializer(serializers.ModelSerializer):
@@ -553,27 +691,40 @@ class SelfAssessmentTemplateDetailSerializer(serializers.ModelSerializer):
             setattr(instance, attr, value)
         instance.save()
         if prompts_data is not None:
-            instance.prompts.all().delete()
+            existing_ids = set(instance.prompts.values_list('id', flat=True))
+            incoming_ids = set()
             for prompt_data in prompts_data:
-                AssessmentPrompt.objects.create(
-                    template=instance,
-                    organization=instance.organization,
-                    **prompt_data,
-                )
+                prompt_id = prompt_data.pop('id', None)
+                if prompt_id and prompt_id in existing_ids:
+                    AssessmentPrompt.objects.filter(id=prompt_id).update(**prompt_data)
+                    incoming_ids.add(prompt_id)
+                else:
+                    new = AssessmentPrompt.objects.create(
+                        template=instance,
+                        organization=instance.organization,
+                        **prompt_data,
+                    )
+                    incoming_ids.add(new.id)
+            removed = existing_ids - incoming_ids
+            if removed:
+                instance.prompts.filter(id__in=removed).delete()
         return instance
 
 
 class AssessmentSubmissionSerializer(serializers.ModelSerializer):
     prompt_name = serializers.CharField(source='prompt.name', read_only=True)
+    reviewed_by_name = serializers.CharField(source='reviewed_by.full_name', read_only=True, default='')
 
     class Meta:
         model = AssessmentSubmission
         fields = [
-            'id', 'assessment', 'prompt', 'prompt_name', 'image',
+            'id', 'assessment', 'prompt', 'prompt_name', 'image', 'is_video',
             'caption', 'self_rating', 'ai_analysis', 'ai_rating',
+            'reviewer_rating', 'reviewer_notes', 'reviewed_by_name', 'reviewed_at',
             'submitted_at',
         ]
-        read_only_fields = ['id', 'ai_analysis', 'ai_rating', 'submitted_at']
+        read_only_fields = ['id', 'ai_analysis', 'ai_rating', 'is_video', 'submitted_at',
+                            'reviewed_by_name', 'reviewed_at']
 
 
 class SelfAssessmentListSerializer(serializers.ModelSerializer):
@@ -603,6 +754,7 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
     reviewed_by_name = serializers.SerializerMethodField()
     submissions = AssessmentSubmissionSerializer(many=True, read_only=True)
     prompts = serializers.SerializerMethodField()
+    action_items_count = serializers.SerializerMethodField()
 
     class Meta:
         model = SelfAssessment
@@ -611,12 +763,19 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
             'submitted_by', 'submitted_by_name', 'reviewed_by',
             'reviewed_by_name', 'status', 'due_date', 'submitted_at',
             'reviewed_at', 'reviewer_notes', 'submissions', 'prompts',
-            'created_at', 'updated_at',
+            'action_items_count', 'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'id', 'template', 'store', 'submitted_by', 'submitted_at',
+            'id', 'submitted_at',
             'reviewed_at', 'created_at', 'updated_at',
         ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Make template/store/submitted_by read-only on update (not create)
+        if self.instance is not None:
+            for field in ('template', 'store', 'submitted_by'):
+                self.fields[field].read_only = True
 
     def get_reviewed_by_name(self, obj):
         if obj.reviewed_by:
@@ -628,6 +787,9 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
             obj.template.prompts.all(), many=True
         ).data
 
+    def get_action_items_count(self, obj):
+        return obj.action_items.count()
+
 
 # ==================== Feature 4: Corrective Action Escalation ====================
 
@@ -635,7 +797,7 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
 class CorrectiveActionListSerializer(serializers.ModelSerializer):
     store_name = serializers.CharField(source='store.name', read_only=True)
     responsible_user_name = serializers.SerializerMethodField()
-    walk_date = serializers.DateField(source='walk.scheduled_date', read_only=True)
+    walk_date = serializers.SerializerMethodField()
 
     class Meta:
         model = CorrectiveAction
@@ -644,7 +806,7 @@ class CorrectiveActionListSerializer(serializers.ModelSerializer):
             'walk', 'store', 'store_name', 'walk_date',
             'responsible_user', 'responsible_user_name',
             'days_overdue', 'last_notified_at', 'resolved_at', 'notes',
-            'created_at', 'updated_at',
+            'is_manual', 'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'action_type', 'escalation_level', 'walk', 'store',
@@ -652,10 +814,41 @@ class CorrectiveActionListSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
 
+    def get_walk_date(self, obj):
+        if obj.walk:
+            return obj.walk.scheduled_date
+        return None
+
     def get_responsible_user_name(self, obj):
         if obj.responsible_user:
             return obj.responsible_user.full_name
         return None
+
+
+class CorrectiveActionCreateSerializer(serializers.ModelSerializer):
+    """Serializer for manually creating corrective actions."""
+
+    class Meta:
+        model = CorrectiveAction
+        fields = ['store', 'notes', 'escalation_level', 'responsible_user']
+
+    def validate_store(self, value):
+        request = self.context['request']
+        if value.organization_id != request.org.id:
+            raise serializers.ValidationError('Store does not belong to this organization.')
+        return value
+
+    def validate_notes(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError('Notes are required for manual corrective actions.')
+        return value.strip()
+
+    def validate_responsible_user(self, value):
+        if value:
+            request = self.context['request']
+            if not value.memberships.filter(organization=request.org).exists():
+                raise serializers.ValidationError('User is not a member of this organization.')
+        return value
 
 
 # ==================== Feature 5: SOP Document Management ====================

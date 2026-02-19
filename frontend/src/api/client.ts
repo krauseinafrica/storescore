@@ -145,6 +145,20 @@ export async function register(data: RegisterData): Promise<RegisterResponse> {
   return response.data;
 }
 
+export interface SignupData {
+  email: string;
+  password: string;
+  first_name: string;
+  last_name: string;
+  company_name: string;
+  trial_source?: string;
+}
+
+export async function selfServeSignup(data: SignupData): Promise<RegisterResponse> {
+  const response = await api.post<RegisterResponse>('/auth/signup/', data);
+  return response.data;
+}
+
 export async function refreshToken(refresh: string): Promise<{ access: string }> {
   const response = await api.post<{ access: string }>('/auth/token/refresh/', {
     refresh,

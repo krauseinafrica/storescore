@@ -6,6 +6,17 @@ import os
 from datetime import timedelta
 from pathlib import Path
 
+import sentry_sdk
+
+sentry_sdk.init(
+    dsn="https://7dc01fed0147d8c7d0d8ef23113a7300@o4510908563521536.ingest.us.sentry.io/4510908602318848",
+    send_default_pii=True,
+    enable_logs=True,
+    traces_sample_rate=1.0,
+    profile_session_sample_rate=1.0,
+    profile_lifecycle="trace",
+)
+
 from decouple import Csv, config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
@@ -105,6 +116,10 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
+# File upload limits (support video uploads up to 100 MB)
+FILE_UPLOAD_MAX_MEMORY_SIZE = 10 * 1024 * 1024  # 10 MB in memory before disk
+DATA_UPLOAD_MAX_MEMORY_SIZE = 105 * 1024 * 1024  # 105 MB total
+
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
@@ -164,6 +179,30 @@ CELERY_BEAT_SCHEDULE = {
         'task': 'apps.billing.tasks.sync_store_counts',
         'schedule': 60 * 60 * 6,  # Run every 6 hours
     },
+    'process-drip-emails': {
+        'task': 'apps.accounts.tasks.process_drip_emails',
+        'schedule': 60 * 60,  # Run every hour
+    },
+    'cleanup-expired-demos': {
+        'task': 'apps.accounts.tasks.cleanup_expired_demos',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'check-trial-engagement': {
+        'task': 'apps.accounts.tasks.check_trial_engagement',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'check-trial-expired': {
+        'task': 'apps.billing.tasks.check_trial_expired',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'send-onboarding-reminders': {
+        'task': 'apps.accounts.tasks.send_onboarding_reminder_emails',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
+    'check-pending-review-action-items': {
+        'task': 'apps.walks.tasks.check_pending_review_action_items',
+        'schedule': 60 * 60 * 24,  # Run daily
+    },
 }
 
 # CORS
@@ -177,14 +216,23 @@ CORS_ALLOW_CREDENTIALS = True
 # Claude API (Anthropic)
 ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')
 
+# Gemini API (Google)
+GEMINI_API_KEY = config('GEMINI_API_KEY', default='')
+
 # Stripe
 STRIPE_SECRET_KEY = config('STRIPE_SECRET_KEY', default='')
 STRIPE_PUBLISHABLE_KEY = config('STRIPE_PUBLISHABLE_KEY', default='')
 STRIPE_WEBHOOK_SECRET = config('STRIPE_WEBHOOK_SECRET', default='')
 
+# Sentry integration
+SENTRY_WEBHOOK_SECRET = config('SENTRY_WEBHOOK_SECRET', default='')
+SENTRY_AUTH_TOKEN = config('SENTRY_AUTH_TOKEN', default='')
+SENTRY_ORG_SLUG = config('SENTRY_ORG_SLUG', default='storescore')
+
 # Email (Resend)
 RESEND_API_KEY = config('RESEND_API_KEY', default='')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='noreply@storescore.app')
+LEAD_NOTIFICATION_EMAIL = config('LEAD_NOTIFICATION_EMAIL', default='')  # Falls back to DEFAULT_FROM_EMAIL if empty
 
 # DigitalOcean Spaces (S3-compatible object storage)
 DO_SPACES_ACCESS_KEY = config('DO_SPACES_ACCESS_KEY', default='')
@@ -214,9 +262,8 @@ if DO_SPACES_ACCESS_KEY:
     AWS_S3_OBJECT_PARAMETERS = {
         'CacheControl': 'max-age=86400',
     }
-    AWS_DEFAULT_ACL = 'private'
-    AWS_QUERYSTRING_AUTH = True
-    AWS_QUERYSTRING_EXPIRE = 3600  # signed URLs expire in 1 hour
+    AWS_DEFAULT_ACL = 'public-read'
+    AWS_QUERYSTRING_AUTH = False
     AWS_S3_FILE_OVERWRITE = False
     AWS_LOCATION = DO_SPACES_LOCATION  # prefix all files under storescore/
 

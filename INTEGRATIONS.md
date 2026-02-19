@@ -98,6 +98,66 @@ Walk score ↔ Sales correlation
 
 ---
 
+### Phase II.5: Deputy Staffing Integration
+
+**Status:** Planned (Deputy API confirmed available)
+
+**What it is:** Deputy is the workforce management platform used by Northwest Ace for scheduling and clock-in/clock-out across all stores. It provides the **staffing hours** piece of the quality–staffing–sales triangle.
+
+**API overview:**
+- RESTful JSON API — nearly every UI function is available via API
+- Base URL: `https://{install}.{geo}.deputy.com/api/v1/`
+- All data queries use `POST /resource/{ObjectName}/QUERY` with JSON filter payloads
+- 500-record pagination limit per response
+- Webhooks available for real-time events (clock-in/out, shift changes)
+
+**Authentication:**
+- **Phase 1 (single franchisee):** Permanent Bearer Token — generated in Deputy admin portal, no OAuth flow needed
+- **Phase 2 (multi-franchisee):** OAuth 2.0 authorization code flow with Client ID/Secret
+
+**Key data to pull:**
+
+| Deputy Resource | Data | StoreScore Use |
+|----------------|------|----------------|
+| **Timesheet** | Clock in/out times, total hours, breaks, cost, location | Daily/weekly staff hours per store |
+| **Roster** | Scheduled shifts (employee + area + time) | Planned vs. actual staffing comparison |
+| **TimesheetPayReturn** | Pay rules, labor costs, overtime | Cost-per-hour analysis |
+| **Employee** | Name, employment data, availability | Headcount per store |
+| **OperationalUnit (Area)** | Location/area hierarchy | Maps to StoreScore stores |
+| **Leave** | Leave requests, balances | Adjusted staffing levels |
+| **SalesData** | Custom sales metrics | Could supplement Eagle POS data |
+
+**Architecture:**
+```
+Deputy API (per franchise install)
+    ↓ POST /resource/Timesheet/QUERY
+StoreScore Celery Worker (nightly pull)
+    ↓
+StoreDataPoint records (metric: "staffing_hours", "labor_cost", etc.)
+    ↓
+Dashboard + Analytics
+    ↓
+Quality score ↔ Staffing hours ↔ Sales correlation
+```
+
+**Real-time option:** Deputy webhooks fire on `Timesheet.Save` (clock-in/out events), enabling live staffing level monitoring without polling.
+
+**Mapping:** Deputy `OperationalUnit` → StoreScore `Store` (configured via `IntegrationConfig.config` JSON field)
+
+**What this enables:**
+- "Store X had 45 staff hours this week, achieved a quality score of 88%, and generated $52K in sales"
+- Optimal staffing level analysis per store
+- Understaffing alerts correlated with quality drops
+- Labor cost per quality point benchmarking
+
+**Requirements:**
+- Deputy admin access from Northwest Ace to generate API token
+- Map Deputy OperationalUnit IDs to StoreScore store records
+- Add `deputy` to `IntegrationConfig.Provider` choices
+- Add `deputy_api` to `StoreDataPoint.Source` choices
+
+---
+
 ### Phase III: Mango Report Integration
 
 **Status:** Planned (waiting for public API or partnership)
@@ -203,3 +263,7 @@ ORDER BY w.completed_date;
 - [Modern Retail — Eagle Integration API](https://www.modernretail.com/) — Third-party Eagle middleware
 - [Jitterbit — Epicor Integration](https://www.jitterbit.com/solutions/epicor-integration/) — iPaaS for Eagle
 - [Mango Report](https://mangoreport.com/) — Ace analytics platform
+- [Deputy API Docs](https://developer.deputy.com/docs/getting-started-with-the-deputy-api) — Workforce management API
+- [Deputy OAuth 2.0](https://developer.deputy.com/docs/using-oauth-20) — Authentication guide
+- [Deputy Webhooks](https://developer.deputy.com/docs/webhook-overview) — Real-time event subscriptions
+- [Deputy Timesheet API](https://developer.deputy.com/docs/retrieving-timesheets-from-deputy) — Clock-in/out data

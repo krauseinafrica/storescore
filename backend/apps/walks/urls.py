@@ -2,12 +2,16 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .analytics import (
+    ActionItemAnalyticsView,
+    DriverAnalyticsView,
     EvaluatorConsistencyView,
+    EvaluatorTrendsView,
     ExportCSVView,
     OverviewView,
     RegionComparisonView,
     ReportScheduleView,
     SectionBreakdownView,
+    SectionStoreComparisonView,
     SectionTrendsView,
     StoreComparisonView,
     StoreScorecardView,
@@ -21,6 +25,7 @@ from .views import (
     CalendarFeedView,
     CorrectiveActionSummaryView,
     CorrectiveActionViewSet,
+    CriterionReferenceImageView,
     DepartmentTypeViewSet,
     DepartmentViewSet,
     DriverViewSet,
@@ -64,6 +69,10 @@ analytics_patterns = [
     path('export/', ExportCSVView.as_view(), name='analytics-export'),
     path('report-schedules/', ReportScheduleView.as_view(), name='analytics-report-schedules'),
     path('evaluator-consistency/', EvaluatorConsistencyView.as_view(), name='analytics-evaluator-consistency'),
+    path('section-stores/', SectionStoreComparisonView.as_view(), name='analytics-section-stores'),
+    path('evaluator-trends/<uuid:evaluator_id>/', EvaluatorTrendsView.as_view(), name='analytics-evaluator-trends'),
+    path('action-items/', ActionItemAnalyticsView.as_view(), name='analytics-action-items'),
+    path('drivers/', DriverAnalyticsView.as_view(), name='analytics-drivers'),
 ]
 
 urlpatterns = [
@@ -71,6 +80,8 @@ urlpatterns = [
     path('walks/<uuid:walk_id>/photos/', WalkPhotoView.as_view(), name='walk-photos'),
     path('walks/<uuid:walk_id>/photos/<uuid:photo_id>/', WalkPhotoView.as_view(), name='walk-photo-delete'),
     path('walks/<uuid:walk_id>/section-notes/', WalkSectionNoteView.as_view(), name='walk-section-notes'),
+    path('criteria/<uuid:criterion_id>/reference-images/', CriterionReferenceImageView.as_view(), name='criterion-reference-images'),
+    path('criteria/<uuid:criterion_id>/reference-images/<uuid:image_id>/', CriterionReferenceImageView.as_view(), name='criterion-reference-image-delete'),
     path('analyze-photo/', AnalyzePhotoView.as_view(), name='analyze-photo'),
     path('corrective-actions/summary/', CorrectiveActionSummaryView.as_view(), name='corrective-action-summary'),
     # Calendar feed

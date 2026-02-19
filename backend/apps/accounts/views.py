@@ -11,8 +11,11 @@ from rest_framework_simplejwt.views import TokenRefreshView as SimpleJWTTokenRef
 from apps.core.permissions import IsOrgAdmin, IsOrgMember
 from apps.core.storage import process_uploaded_image
 
+from django.db import transaction
+from django.utils.text import slugify
+
 from .emails import send_invitation_email, send_password_reset_email
-from .models import Membership, Organization, RegionAssignment, StoreAssignment, User
+from .models import Membership, Organization, RegionAssignment, StoreAssignment, SupportTicket, TicketMessage, User
 from .serializers import (
     AdminUserUpdateSerializer,
     ChangePasswordSerializer,
@@ -25,6 +28,9 @@ from .serializers import (
     PasswordResetRequestSerializer,
     ProfileUpdateSerializer,
     RegisterSerializer,
+    SupportTicketCreateSerializer,
+    SupportTicketSerializer,
+    TicketMessageSerializer,
     UpdateMemberRoleSerializer,
     UserSerializer,
 )
@@ -386,3 +392,233 @@ class ResendInviteView(APIView):
             {'detail': 'Failed to send invitation email. Please try again later.'},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
+
+
+class SelfServeSignupView(APIView):
+    """Self-serve signup: creates User + Org + Membership, returns JWT tokens."""
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    @transaction.atomic
+    def post(self, request):
+        from rest_framework_simplejwt.tokens import RefreshToken
+
+        email = request.data.get('email', '').strip().lower()
+        password = request.data.get('password', '')
+        first_name = request.data.get('first_name', '').strip()
+        last_name = request.data.get('last_name', '').strip()
+        company_name = request.data.get('company_name', '').strip()
+        trial_source = request.data.get('trial_source', '').strip()
+
+        # Validation
+        errors = {}
+        if not email:
+            errors['email'] = 'Email is required.'
+        if not password or len(password) < 8:
+            errors['password'] = 'Password must be at least 8 characters.'
+        if not first_name:
+            errors['first_name'] = 'First name is required.'
+        if not last_name:
+            errors['last_name'] = 'Last name is required.'
+        if not company_name:
+            errors['company_name'] = 'Company name is required.'
+
+        if email and User.objects.filter(email=email).exists():
+            errors['email'] = 'A user with this email already exists.'
+
+        if errors:
+            return Response(errors, status=status.HTTP_400_BAD_REQUEST)
+
+        # Create user
+        user = User.objects.create_user(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+        )
+
+        # Create organization with unique slug
+        base_slug = slugify(company_name)
+        slug = base_slug or 'org'
+        counter = 1
+        while Organization.objects.filter(slug=slug).exists():
+            slug = f'{base_slug}-{counter}'
+            counter += 1
+
+        org = Organization(name=company_name, slug=slug, owner=user)
+        # Pass trial_source to the signal via a transient attribute
+        org._trial_source = trial_source
+        org.save()
+
+        # Create owner membership
+        Membership.objects.create(
+            user=user,
+            organization=org,
+            role=Membership.Role.OWNER,
+        )
+
+        # Schedule drip campaign
+        from .tasks import schedule_drip_campaign
+        from .leads import Lead
+
+        # Create a lead record for tracking
+        lead = Lead.objects.create(
+            email=email,
+            first_name=first_name,
+            last_name=last_name,
+            company_name=company_name,
+            source=trial_source or 'self-serve',
+            status='converted',
+            demo_org=org,
+        )
+        schedule_drip_campaign.delay(str(lead.id))
+
+        # Return JWT tokens for auto-login
+        refresh = RefreshToken.for_user(user)
+        return Response({
+            'user': UserSerializer(user).data,
+            'organization': OrganizationSerializer(org).data,
+            'tokens': {
+                'access': str(refresh.access_token),
+                'refresh': str(refresh),
+            },
+        }, status=status.HTTP_201_CREATED)
+
+
+class SupportTicketListView(APIView):
+    """List tickets for the current org, or create a new ticket."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        from apps.core.permissions import get_org_from_request
+        org = get_org_from_request(request)
+
+        # Platform admins can request all tickets via ?scope=platform
+        if request.user.is_staff and request.query_params.get('scope') == 'platform':
+            tickets = SupportTicket.objects.all()
+        elif org:
+            tickets = SupportTicket.objects.filter(organization=org)
+        else:
+            tickets = SupportTicket.objects.none()
+
+        tickets = tickets.select_related('user', 'organization').prefetch_related('messages__user')
+        return Response(SupportTicketSerializer(tickets, many=True).data)
+
+    def post(self, request):
+        from apps.core.permissions import get_org_from_request
+        org = get_org_from_request(request)
+        if not org:
+            return Response({'detail': 'Organization required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = SupportTicketCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        ticket = SupportTicket.objects.create(
+            organization=org,
+            user=request.user,
+            subject=serializer.validated_data['subject'],
+            description=serializer.validated_data['description'],
+            priority=serializer.validated_data['priority'],
+            category=serializer.validated_data.get('category', 'other'),
+        )
+
+        # Create initial message from description
+        TicketMessage.objects.create(
+            ticket=ticket,
+            user=request.user,
+            message=serializer.validated_data['description'],
+        )
+
+        # Send notification
+        from .tasks import send_ticket_notification
+        send_ticket_notification.delay(str(ticket.id))
+
+        ticket.refresh_from_db()
+        return Response(
+            SupportTicketSerializer(ticket).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class SupportTicketDetailView(APIView):
+    """Get ticket detail or add a message."""
+    permission_classes = [IsAuthenticated]
+
+    def _get_ticket(self, request, ticket_id):
+        from apps.core.permissions import get_org_from_request
+        try:
+            ticket = SupportTicket.objects.select_related(
+                'user', 'organization'
+            ).prefetch_related('messages__user').get(id=ticket_id)
+        except SupportTicket.DoesNotExist:
+            return None
+
+        # Staff can see all tickets (including Sentry tickets with no org)
+        if request.user.is_staff:
+            return ticket
+
+        org = get_org_from_request(request)
+        if not org or ticket.organization_id != org.id:
+            return None
+        return ticket
+
+    def get(self, request, ticket_id):
+        ticket = self._get_ticket(request, ticket_id)
+        if not ticket:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SupportTicketSerializer(ticket).data)
+
+    def post(self, request, ticket_id):
+        """Add a message to the ticket."""
+        ticket = self._get_ticket(request, ticket_id)
+        if not ticket:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        message_text = request.data.get('message', '').strip()
+        if not message_text:
+            return Response({'detail': 'Message is required.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        msg = TicketMessage.objects.create(
+            ticket=ticket,
+            user=request.user,
+            message=message_text,
+        )
+
+        # Update ticket status if platform admin is replying
+        if request.user.is_staff and ticket.status == 'open':
+            ticket.status = 'in_progress'
+            ticket.save(update_fields=['status', 'updated_at'])
+
+        return Response(TicketMessageSerializer(msg).data, status=status.HTTP_201_CREATED)
+
+    def patch(self, request, ticket_id):
+        """Update ticket fields (admin only)."""
+        ticket = self._get_ticket(request, ticket_id)
+        if not ticket:
+            return Response({'detail': 'Not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+        update_fields = ['updated_at']
+
+        new_status = request.data.get('status')
+        if new_status and new_status in dict(SupportTicket.Status.choices):
+            ticket.status = new_status
+            update_fields.append('status')
+
+        new_category = request.data.get('category')
+        if new_category and new_category in dict(SupportTicket.Category.choices):
+            ticket.category = new_category
+            update_fields.append('category')
+
+        if 'resolution_notes' in request.data:
+            ticket.resolution_notes = request.data['resolution_notes']
+            update_fields.append('resolution_notes')
+
+        if len(update_fields) > 1:
+            ticket.save(update_fields=update_fields)
+
+        # Sync resolution to Sentry if applicable
+        if new_status in ('resolved', 'closed') and ticket.source == 'sentry' and ticket.external_id:
+            from .tasks import resolve_sentry_issue
+            resolve_sentry_issue.delay(ticket.external_id)
+
+        return Response(SupportTicketSerializer(ticket).data)

@@ -48,14 +48,14 @@ ARTICLES = [
                 'title': 'Navigating the Platform',
                 'order': 1,
                 'content': (
-                    '<p>StoreScore is organized around a sidebar navigation that adapts to your role:</p>'
+                    '<p>StoreScore is organized around a sidebar navigation grouped into sections that adapt to your role:</p>'
                     '<ul>'
-                    '<li><strong>Dashboard</strong> — overview of activity and metrics</li>'
-                    '<li><strong>Stores</strong> — manage your store locations</li>'
-                    '<li><strong>Walks</strong> — conduct and review evaluations</li>'
-                    '<li><strong>Action Items</strong> — track follow-up tasks from evaluations</li>'
-                    '<li><strong>Reports</strong> — view trends and export data</li>'
-                    '<li><strong>Settings</strong> — configure goals, templates, and organization preferences</li>'
+                    '<li><strong>Operations</strong> — Dashboard, Evaluations (Store Walks, Department Evals, Assessments, Schedules), and Stores</li>'
+                    '<li><strong>Follow-up</strong> — Follow-ups (Action Items &amp; Corrective Actions)</li>'
+                    '<li><strong>Insights</strong> — Reports and Leaderboard</li>'
+                    '<li><strong>Configuration</strong> (admin only) — Templates (Your Templates, Library, Assessments, Scoring Drivers, SOPs, Reference Images) and Departments</li>'
+                    '<li><strong>Organization</strong> (admin only) — Team, Settings, Data &amp; Integrations, and Billing</li>'
+                    '<li><strong>Help Center</strong> — always available at the bottom</li>'
                     '</ul>'
                     '<p>Your role determines which sections are visible. Admins and owners have access to all areas, '
                     'while evaluators see a focused view of walks and stores.</p>'
@@ -70,10 +70,9 @@ ARTICLES = [
                     '<ul>'
                     '<li><strong>Walks</strong> — in-store evaluations conducted using a scoring template</li>'
                     '<li><strong>Scoring Templates</strong> — customizable checklists with sections, criteria, and point values</li>'
-                    '<li><strong>Action Items</strong> — follow-up tasks created from walk findings</li>'
+                    '<li><strong>Follow-ups</strong> — action items and corrective actions created from walk findings</li>'
                     '<li><strong>Drivers</strong> — root cause categories assigned to low-scoring criteria</li>'
                     '<li><strong>Self-Assessments</strong> — photo-based store self-checks submitted by managers</li>'
-                    '<li><strong>Corrective Actions</strong> — automated escalations for overdue evaluations or unacknowledged walks</li>'
                     '</ul>'
                 ),
             },
@@ -104,8 +103,8 @@ ARTICLES = [
                 'title': 'Step 2: Create a Scoring Template',
                 'order': 1,
                 'content': (
-                    '<p>Go to <a href="/settings">Settings</a> and find the <strong>Scoring Templates</strong> section. '
-                    'Click <strong>Create Template</strong> to build your first evaluation checklist.</p>'
+                    '<p>Go to <a href="/templates">Templates</a> and click <strong>Create Template</strong> '
+                    'to build your first evaluation checklist.</p>'
                     '<ul>'
                     '<li>Add <strong>sections</strong> to group related criteria (e.g., "Cleanliness", "Merchandising")</li>'
                     '<li>Add <strong>criteria</strong> within each section with point values</li>'
@@ -240,23 +239,29 @@ ARTICLES = [
         'summary': 'Create and customize scoring templates with sections, criteria, weights, and point values.',
         'category': 'evaluations',
         'feature_tier': 'starter',
-        'app_route': '/settings',
+        'app_route': '/templates',
         'order': 0,
         'sections': [
             {
                 'anchor': 'templates-overview',
-                'title': 'Template Structure',
+                'title': 'Getting Started with Templates',
                 'order': 0,
                 'content': (
-                    '<p>Scoring templates define what gets evaluated during a walk. Each template contains:</p>'
+                    '<p>Evaluation templates define what gets scored during a store walk. The fastest way to get started is to '
+                    '<strong>install a pre-built template</strong> from the <a href="/templates#library">Template Library</a>.</p>'
+                    '<h3>Install a Template</h3>'
+                    '<p>Browse the library for templates built for your industry. Click "Install" to add one to your organization. '
+                    'Installed templates appear under <a href="/templates#your-templates">Your Templates</a> where you can customize them.</p>'
+                    '<h3>Template Structure</h3>'
+                    '<p>Each template contains:</p>'
                     '<ul>'
                     '<li><strong>Sections</strong> — logical groupings like "Cleanliness", "Customer Service", "Safety"</li>'
                     '<li><strong>Criteria</strong> — individual items to score within each section</li>'
                     '<li><strong>Point values</strong> — maximum points per criterion</li>'
                     '<li><strong>Section weights</strong> — percentage weight for each section\'s contribution to the total score</li>'
                     '</ul>'
-                    '<p>Templates are managed from <a href="/settings">Settings</a>. You can have multiple templates '
-                    'for different evaluation types (e.g., full audit vs. quick check).</p>'
+                    '<p>You can have multiple templates for different evaluation types (e.g., full audit vs. quick check). '
+                    'Edit any installed template to add, remove, or reorder sections and criteria to match your needs.</p>'
                 ),
             },
             {
@@ -386,7 +391,7 @@ ARTICLES = [
         'summary': 'Use drivers to identify root causes when criteria score low during evaluations.',
         'category': 'evaluations',
         'feature_tier': 'starter',
-        'app_route': '/settings',
+        'app_route': '/templates',
         'order': 3,
         'sections': [
             {
@@ -404,7 +409,8 @@ ARTICLES = [
                     '<li>Process — unclear or outdated process</li>'
                     '<li>Staffing — not enough staff on shift</li>'
                     '</ul>'
-                    '<p>Drivers are configured in <a href="/settings">Settings</a> and can be customized '
+                    '<p>Drivers are configured from the <strong>Scoring Drivers</strong> tab on the '
+                    '<a href="/templates">Templates</a> page and can be customized '
                     'to match your organization\'s needs. Driver data appears in reports to help '
                     'identify systemic issues.</p>'
                 ),
@@ -419,7 +425,7 @@ ARTICLES = [
         'summary': 'Create, assign, and track follow-up tasks from walk findings with photo verification.',
         'category': 'action_tracking',
         'feature_tier': 'pro',
-        'app_route': '/action-items',
+        'app_route': '/follow-ups',
         'order': 0,
         'sections': [
             {
@@ -464,7 +470,7 @@ ARTICLES = [
         'summary': 'Automated escalations for overdue evaluations and unacknowledged walks.',
         'category': 'action_tracking',
         'feature_tier': 'pro',
-        'app_route': '/corrective-actions',
+        'app_route': '/follow-ups',
         'order': 1,
         'sections': [
             {
@@ -622,7 +628,7 @@ ARTICLES = [
         'summary': 'Automate walk scheduling with recurring frequencies and calendar integration.',
         'category': 'scheduling',
         'feature_tier': 'pro',
-        'app_route': '/schedules',
+        'app_route': '/walks',
         'order': 0,
         'sections': [
             {
@@ -638,7 +644,7 @@ ARTICLES = [
                     '<li><strong>Evaluator assignment</strong> — optionally pre-assign an evaluator</li>'
                     '<li><strong>Reminders</strong> — configurable reminder notifications before scheduled walks</li>'
                     '</ul>'
-                    '<p>Manage schedules from the <a href="/schedules">Schedules</a> page. '
+                    '<p>Manage schedules from the <strong>Schedules</strong> tab on the <a href="/walks">Walks</a> page. '
                     'You can also subscribe to a calendar feed (iCal) to see scheduled walks in your calendar app.</p>'
                 ),
             },
@@ -709,12 +715,12 @@ ARTICLES = [
                 'content': (
                     '<p>The <a href="/settings">Settings</a> page is where admins configure the organization:</p>'
                     '<ul>'
-                    '<li><strong>Scoring templates</strong> — create and manage evaluation templates</li>'
-                    '<li><strong>Drivers</strong> — configure root cause categories</li>'
-                    '<li><strong>Goals</strong> — set performance targets</li>'
+                    '<li><strong>Organization profile</strong> — update company name, industry, and contact info</li>'
+                    '<li><strong>Goals</strong> — set performance targets for scores and walk frequency</li>'
                     '<li><strong>Benchmarking</strong> — opt in/out of anonymous benchmarking</li>'
                     '</ul>'
-                    '<p>Only users with Admin or Owner roles can access Settings.</p>'
+                    '<p>Scoring templates and drivers are managed from the <a href="/templates">Templates</a> page. '
+                    'Only users with Admin or Owner roles can access Settings.</p>'
                 ),
             },
         ],
@@ -727,7 +733,7 @@ ARTICLES = [
         'summary': 'Upload standard operating procedures and link them to scoring criteria for reference during walks.',
         'category': 'evaluations',
         'feature_tier': 'pro',
-        'app_route': '/sop-documents',
+        'app_route': '/templates',
         'order': 4,
         'sections': [
             {
@@ -745,7 +751,7 @@ ARTICLES = [
                     'relate to each SOP based on content analysis</li>'
                     '<li><strong>Reference during walks</strong> — evaluators can see linked SOPs while scoring</li>'
                     '</ul>'
-                    '<p>Manage SOP documents from the <a href="/sop-documents">SOP Documents</a> page.</p>'
+                    '<p>Manage SOP documents from the <strong>SOPs</strong> tab on the <a href="/templates">Templates</a> page.</p>'
                 ),
             },
         ],
@@ -755,10 +761,10 @@ ARTICLES = [
     {
         'title': 'Self-Assessments',
         'slug': 'self-assessments',
-        'summary': 'Photo-based store self-checks submitted by managers between formal evaluations.',
+        'summary': 'Photo-based store self-checks with AI analysis, submitted by managers between formal evaluations.',
         'category': 'evaluations',
         'feature_tier': 'starter',
-        'app_route': '/self-assessments',
+        'app_route': '/evaluations#assessments',
         'order': 5,
         'sections': [
             {
@@ -769,10 +775,12 @@ ARTICLES = [
                     '<p><strong>Self-Assessments</strong> let store managers submit photo-based evaluations '
                     'of their store between formal walks.</p>'
                     '<ul>'
-                    '<li>Admins create <strong>assessment templates</strong> with prompts</li>'
+                    '<li>Admins create <strong>assessment templates</strong> with customizable prompts (under Templates &rarr; Assessments)</li>'
                     '<li>Store managers <strong>submit photos</strong> with self-ratings for each prompt</li>'
-                    '<li>On Pro/Enterprise, <strong>AI analyzes</strong> the photos and provides its own rating</li>'
-                    '<li>Admins <strong>review</strong> submissions and add feedback</li>'
+                    '<li><strong>AI analyzes</strong> each photo and provides its own rating with detailed observations</li>'
+                    '<li>Reviewers can <strong>override AI ratings</strong> and add their own commentary per submission</li>'
+                    '<li><strong>Action items</strong> can be created from assessment findings with configurable deadlines</li>'
+                    '<li>Store managers receive <strong>email notifications</strong> when action items are assigned</li>'
                     '</ul>'
                     '<p>Self-assessments help maintain standards between formal evaluations and give managers '
                     'ownership of their store\'s presentation.</p>'

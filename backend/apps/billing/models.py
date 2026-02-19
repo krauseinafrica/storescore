@@ -91,7 +91,21 @@ class Subscription(TimestampedModel):
     cancel_at_period_end = models.BooleanField(default=False)
     discount_percent = models.IntegerField(
         default=0,
-        help_text='Volume discount percentage applied (0, 10, 20, or 30).',
+        help_text='Volume discount percentage applied (0, 5, 10, 15, or 20).',
+    )
+    promo_discount_name = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text='Admin-assigned promotional discount label, e.g. "Partner Rate".',
+    )
+    promo_discount_percent = models.IntegerField(
+        default=0,
+        help_text='Promotional discount percentage (0-100). When > 0, overrides volume discount.',
+    )
+    trial_source = models.CharField(
+        max_length=50,
+        blank=True,
+        default='',
+        help_text='Source of signup: product-tour, website, etc.',
     )
 
     class Meta:
@@ -99,6 +113,13 @@ class Subscription(TimestampedModel):
 
     def __str__(self):
         return f'{self.organization.name} - {self.plan.name} ({self.status})'
+
+    @property
+    def effective_discount_percent(self):
+        """Promo overrides volume discount."""
+        if self.promo_discount_percent > 0:
+            return self.promo_discount_percent
+        return self.discount_percent
 
     @property
     def is_active_subscription(self):
@@ -120,6 +141,8 @@ class Subscription(TimestampedModel):
     @staticmethod
     def get_volume_discount(store_count):
         """Return the volume discount percentage based on store count."""
+        if store_count >= 25:
+            return 20
         if store_count >= 10:
             return 15
         if store_count >= 5:
