@@ -685,7 +685,8 @@ Xenia is the closest competitor in feature set and philosophy (modern, AI-powere
 | **AI Features** | | | | | | | | | | | | | |
 | AI Walk Summaries | **YES** | No | No | No | No | No | No | No | No | No | No | No | No |
 | AI SOP Generation | **YES** | No | No | No | No | No | Yes | No | No | No | No | No | No |
-| AI Image Recognition | Planned | No | No | **Yes** | No | **Yes** | No | No | No | No | No | No | No |
+| AI Photo/Video Analysis | **YES** | No | No | **Yes** | No | **Yes** | No | No | No | No | No | No | No |
+| AI Auto-Action Items | **YES** | No | No | No | No | No | No | No | No | No | No | No | No |
 | AI-Powered Templates | No | No | No | No | Yes | No | No | No | No | No | No | Yes | No |
 | **Verification** | | | | | | | | | | | | | |
 | QR Code Verification | **YES** | Issues only | No | Premium only | No | No | **Yes** | Clock only | No | **Yes** | No | No | No |
@@ -842,8 +843,8 @@ Based on competitive analysis, StoreScore should implement:
 
 ## StoreScore Differentiators
 
-### 1. AI-Powered Walk Summaries (Unique -- No Competitor Offers This)
-StoreScore uses AI to generate narrative summaries of store walks, transforming raw checklist data into actionable, readable insights. No competitor produces AI summaries of inspection findings. SafetyCulture has training AI (separate product), FranConnect has "Frannie AI" for general business outcomes, and Xenia has AI SOP generation -- but none summarize walk results with AI to create a narrative report that tells the story of the walk.
+### 1. AI-Powered Walk Summaries + Photo Analysis (Unique Combination)
+StoreScore uses AI to generate narrative summaries of store walks, transforming raw checklist data into actionable, readable insights. Additionally, Gemini 2.5 Flash analyzes assessment photos/videos to provide objective quality ratings. **Quick Assessments** (new Feb 2026) let regional managers snap freeform photos at any store — AI automatically analyzes issues and creates prioritized action items without manual intervention. No competitor offers this AI-powered "snap-and-go" assessment workflow with auto-generated corrective actions.
 
 ### 2. Location Verification Badges (Unique -- No Competitor Offers This)
 Dual QR code + GPS verification produces visible trust badges on walk reports ("Verified On-Site", "GPS + QR Confirmed"). No competitor surfaces location verification as a visual trust indicator in walk reports. All competitors that capture GPS store it as invisible metadata. This is especially valuable for franchise systems requiring proof of in-person walks and creates a new standard for walk report credibility.

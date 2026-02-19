@@ -314,6 +314,25 @@ AI-powered store quality management platform for multi-location retailers, resta
 - [x] Continue/Delete buttons on assessment cards
 - [x] Getting Started page horizontal card layout
 - [x] Back to Setup floating button
+- [x] **Quick Assessment mode** — freeform photo capture by regional managers/admins:
+  - [x] `assessment_type` field ('self'/'quick') on SelfAssessment model
+  - [x] `area` field (optional freeform text, e.g. "produce", "bakery")
+  - [x] Template and due_date made nullable for quick assessments
+  - [x] Prompt FK made nullable on AssessmentSubmission
+  - [x] Branched AI prompt construction (quick vs self-assessment)
+  - [x] Auto-created action items from AI findings (critical=1d, high=3d, medium=7d, low=14d)
+  - [x] Frontend: type filter pills (All Types | Self-Assessment | Quick Assessment)
+  - [x] Frontend: quick create modal (store + optional area, no template/due date)
+  - [x] Frontend: branched detail view (photo grid for quick, prompt-slots for self)
+  - [x] Frontend: violet "Quick" badge on assessment cards
+  - [x] Frontend: read-only AI findings with "Action items created automatically" message
+- [x] **Enterprise-only assessment gate** — moved assessments from Pro to Enterprise:
+  - [x] Billing migration: Pro plan `self_assessments` feature set to false
+  - [x] FeatureGate updated from `requiredPlan="Pro"` to `requiredPlan="Enterprise"`
+- [x] **AI Usage Tracking** (AiUsageLog model, ai_costs.py):
+  - [x] Log every AI API call with model, tokens, estimated cost
+  - [x] Platform admin AI cost dashboard
+  - [x] System health endpoints
 - [ ] Video walkthrough support (Phase 9 dependency)
 
 ## Phase 5.75b: Review Sign-Off & Push-Back Flow (COMPLETE)
