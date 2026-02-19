@@ -36,6 +36,8 @@ def generate_walk_summary(walk: Walk) -> str:
             max_tokens=1500,
             messages=[{'role': 'user', 'content': prompt}],
         )
+        from .ai_costs import log_anthropic_usage
+        log_anthropic_usage(message, 'walk_summary', organization=walk.organization, user=walk.conducted_by)
         return message.content[0].text
     except Exception as e:
         logger.error(f'Claude API error for walk {walk.id}: {e}')
@@ -118,7 +120,19 @@ def _build_walk_data(walk: Walk) -> dict:
                 photo_captions[photo.criterion_id] = []
             photo_captions[photo.criterion_id].append(photo.caption)
 
-    sections = walk.template.sections.prefetch_related('criteria').order_by('order')
+    if walk.template:
+        sections = walk.template.sections.prefetch_related('criteria').order_by('order')
+    elif walk.department:
+        sections = walk.department.sections.prefetch_related('criteria').order_by('order')
+    else:
+        return {
+            'store': walk.store.name,
+            'date': str(walk.scheduled_date),
+            'conducted_by': walk.conducted_by.full_name,
+            'total_score': float(walk.total_score) if walk.total_score else None,
+            'sections': [],
+            'walk_notes': walk.notes,
+        }
     sections_data = []
 
     for section in sections:
@@ -211,7 +225,12 @@ Keep the summary under 400 words. Do not use markdown headers — use bold text 
 def _build_fallback_summary(walk: Walk) -> str:
     """Generate a simple summary without AI when the API key is not configured."""
     scores = walk.scores.select_related('criterion__section').all()
-    sections = walk.template.sections.prefetch_related('criteria').order_by('order')
+    if walk.template:
+        sections = walk.template.sections.prefetch_related('criteria').order_by('order')
+    elif walk.department:
+        sections = walk.department.sections.prefetch_related('criteria').order_by('order')
+    else:
+        return f'Walk at {walk.store.name} — Score: {walk.total_score}%'
 
     lines = []
     for section in sections:
@@ -1013,7 +1032,7 @@ def send_assessment_review_notification(assessment):
                 rating = (sub.ai_rating or '').upper()
 
             ai_summaries.append({
-                'prompt_name': sub.prompt.name,
+                'prompt_name': sub.prompt.name if sub.prompt else (assessment.area or 'General Area'),
                 'ai_rating': rating,
                 'self_rating': (sub.self_rating or '').upper(),
                 'summary': summary_text,

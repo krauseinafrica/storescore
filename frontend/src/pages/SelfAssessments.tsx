@@ -6,6 +6,7 @@ import {
   getAssessment,
   getAssessmentTemplates,
   createAssessment,
+  createQuickAssessment,
   submitAssessment,
   reviewAssessment,
   deleteAssessment,
@@ -19,6 +20,7 @@ import type {
   SelfAssessment,
   SelfAssessmentTemplate,
   AssessmentSubmission,
+  AssessmentType,
   Store,
   SelfAssessmentStatus,
 } from '../types';
@@ -44,6 +46,7 @@ export function SelfAssessmentsContent() {
   const orgId = getOrgId();
   const isManager = hasRole('store_manager');
   const isAdmin = hasRole('admin');
+  const isRegionalManager = hasRole('regional_manager');
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [assessments, setAssessments] = useState<SelfAssessment[]>([]);
@@ -51,6 +54,7 @@ export function SelfAssessmentsContent() {
   const [stores, setStores] = useState<Store[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<SelfAssessmentStatus | 'all'>('all');
+  const [typeFilter, setTypeFilter] = useState<AssessmentType | 'all'>('all');
 
   // Detail view — driven by URL search param ?assessment=<id>
   const selectedId = searchParams.get('assessment');
@@ -63,6 +67,12 @@ export function SelfAssessmentsContent() {
   const [createStore, setCreateStore] = useState('');
   const [createDueDate, setCreateDueDate] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // Quick create modal
+  const [showQuickCreate, setShowQuickCreate] = useState(false);
+  const [quickCreateStore, setQuickCreateStore] = useState('');
+  const [quickCreateArea, setQuickCreateArea] = useState('');
+  const [creatingQuick, setCreatingQuick] = useState(false);
 
   // Submission flow
   const [uploadingPromptId, setUploadingPromptId] = useState<string | null>(null);
@@ -107,6 +117,7 @@ export function SelfAssessmentsContent() {
       try {
         const params: Record<string, string> = {};
         if (activeTab !== 'all') params.status = activeTab;
+        if (typeFilter !== 'all') params.type = typeFilter;
         const [a, t, s] = await Promise.all([
           getAssessments(orgId, params),
           getAssessmentTemplates(orgId).catch(() => [] as SelfAssessmentTemplate[]),
@@ -124,7 +135,7 @@ export function SelfAssessmentsContent() {
     setLoading(true);
     load();
     return () => { cancelled = true; };
-  }, [orgId, activeTab]);
+  }, [orgId, activeTab, typeFilter]);
 
   // Load detail when URL has ?assessment=<id>
   useEffect(() => {
@@ -191,6 +202,28 @@ export function SelfAssessmentsContent() {
     }
   };
 
+  const handleQuickCreate = async () => {
+    if (!quickCreateStore) return;
+    setCreatingQuick(true);
+    setError('');
+    try {
+      const created = await createQuickAssessment(orgId, {
+        store: quickCreateStore,
+        submitted_by: user?.id || '',
+        area: quickCreateArea || undefined,
+      });
+      setAssessments(prev => [created, ...prev]);
+      setShowQuickCreate(false);
+      setQuickCreateStore('');
+      setQuickCreateArea('');
+      openDetail(created.id);
+    } catch (err: any) {
+      setError(err.response?.data?.detail || 'Failed to create quick assessment.');
+    } finally {
+      setCreatingQuick(false);
+    }
+  };
+
   const [uploading, setUploading] = useState(false);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -202,14 +235,16 @@ export function SelfAssessmentsContent() {
   };
 
   const handleSaveSubmission = async () => {
-    if (!pendingFile || !detail || !uploadingPromptId) return;
+    if (!pendingFile || !detail) return;
+    // Self-assessments require a prompt; quick assessments don't
+    if (!detail.is_quick && !uploadingPromptId) return;
     setError('');
     setUploading(true);
     try {
       await uploadAssessmentSubmission(
         orgId,
         detail.id,
-        uploadingPromptId,
+        detail.is_quick ? null : uploadingPromptId,
         pendingFile,
         submissionCaption || undefined,
         submissionRating || undefined,
@@ -419,7 +454,7 @@ export function SelfAssessmentsContent() {
     const prompts = detail.prompts || [];
     const submissions = detail.submissions || [];
     const submissionsByPrompt = new Map<string, AssessmentSubmission>();
-    submissions.forEach(s => submissionsByPrompt.set(s.prompt, s));
+    submissions.forEach(s => { if (s.prompt) submissionsByPrompt.set(s.prompt, s); });
 
     return (
       <div className="max-w-3xl mx-auto">
@@ -438,7 +473,14 @@ export function SelfAssessmentsContent() {
         <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-5 mb-4">
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-lg font-bold text-gray-900">{detail.template_name}</h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold text-gray-900">
+                  {detail.is_quick ? `Quick Assessment${detail.area ? ` \u2013 ${detail.area}` : ''}` : detail.template_name}
+                </h1>
+                {detail.is_quick && (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700">Quick</span>
+                )}
+              </div>
               <p className="text-sm text-gray-500 mt-0.5">{detail.store_name}</p>
             </div>
             <div className="flex items-center gap-2">
@@ -463,10 +505,18 @@ export function SelfAssessmentsContent() {
               <span className="text-gray-400">Submitted By</span>
               <p className="font-medium text-gray-900">{detail.submitted_by_name}</p>
             </div>
-            <div>
-              <span className="text-gray-400">Due Date</span>
-              <p className="font-medium text-gray-900">{formatDate(detail.due_date)}</p>
-            </div>
+            {detail.due_date && (
+              <div>
+                <span className="text-gray-400">Due Date</span>
+                <p className="font-medium text-gray-900">{formatDate(detail.due_date)}</p>
+              </div>
+            )}
+            {detail.is_quick && detail.area && (
+              <div>
+                <span className="text-gray-400">Area</span>
+                <p className="font-medium text-gray-900">{detail.area}</p>
+              </div>
+            )}
             {detail.submitted_at && (
               <div>
                 <span className="text-gray-400">Submitted At</span>
@@ -488,7 +538,211 @@ export function SelfAssessmentsContent() {
           )}
         </div>
 
-        {/* Prompt cards */}
+        {/* Quick assessment: photo grid */}
+        {detail.is_quick ? (
+          <div className="space-y-4">
+            {/* Existing photos */}
+            {submissions.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {submissions.map(sub => (
+                  <div key={sub.id} className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 overflow-hidden">
+                    {sub.is_video ? (
+                      <video src={sub.image} controls className="w-full aspect-square object-cover" preload="metadata" />
+                    ) : (
+                      <img src={sub.image} alt={sub.caption || 'Photo'} className="w-full aspect-square object-cover" />
+                    )}
+                    {sub.caption && (
+                      <p className="text-xs text-gray-500 px-3 py-2 border-t border-gray-100">{sub.caption}</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Add photo UI */}
+            {detail.status === 'pending' && (
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*,video/mp4,video/quicktime"
+                  onChange={handleFileSelect}
+                  className="hidden"
+                />
+                {pendingPreview ? (
+                  <div className="space-y-3">
+                    <div className="relative">
+                      {pendingFile?.type.startsWith('video/') ? (
+                        <video src={pendingPreview} controls className="rounded-lg max-h-48 w-auto" preload="metadata" />
+                      ) : (
+                        <img src={pendingPreview} alt="Preview" className="rounded-lg max-h-48 w-auto" />
+                      )}
+                      <button
+                        onClick={() => { setPendingFile(null); setPendingPreview(null); }}
+                        className="mt-1 text-xs text-red-600 hover:text-red-700"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                    <input
+                      value={submissionCaption}
+                      onChange={e => setSubmissionCaption(e.target.value)}
+                      placeholder="Optional caption..."
+                      className="block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 focus:outline-none"
+                    />
+                    {uploading ? (
+                      <div className="flex items-center gap-3 py-2">
+                        <div className="w-8 h-8 rounded-full bg-primary-100 flex items-center justify-center flex-shrink-0">
+                          <svg className="animate-spin h-4 w-4 text-primary-600" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                        </div>
+                        <p className="text-xs font-medium text-gray-700">Uploading...</p>
+                      </div>
+                    ) : (
+                      <div className="flex gap-2">
+                        <button
+                          onClick={handleSaveSubmission}
+                          disabled={!pendingFile}
+                          className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-primary-700 disabled:opacity-50"
+                        >
+                          Save Photo
+                        </button>
+                        <button
+                          onClick={() => { setPendingFile(null); setPendingPreview(null); setSubmissionCaption(''); }}
+                          className="text-xs text-gray-500 hover:text-gray-700"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => fileRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border-2 border-dashed border-gray-300 bg-white px-4 py-3 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors w-full justify-center"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                    </svg>
+                    Add Photo
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* Submit button for quick assessment */}
+            {detail.status === 'pending' && submissions.length > 0 && (
+              <button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="w-full rounded-xl bg-primary-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+              >
+                {submitting ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                    Submitting...
+                  </>
+                ) : (
+                  <>Submit Assessment ({submissions.length} photo{submissions.length !== 1 ? 's' : ''})</>
+                )}
+              </button>
+            )}
+
+            {/* AI processing indicator */}
+            {aiProcessing && !submissions.some(s => s.ai_analysis) && (
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-5">
+                <div className="flex items-center gap-3 text-sm text-gray-500">
+                  <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
+                    <svg className="animate-spin h-4 w-4 text-blue-500" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                  </div>
+                  <div>
+                    <p className="font-medium text-gray-700">AI is analyzing your photos...</p>
+                    <p className="text-xs text-gray-400 mt-0.5">This usually takes 5-15 seconds. Action items will be created automatically.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* AI findings — read-only for quick assessments */}
+            {(detail.status === 'submitted' || detail.status === 'reviewed') && submissions.some(s => s.ai_analysis) && (
+              <div className="space-y-4">
+                {/* Auto action items banner */}
+                <div className="rounded-xl bg-green-50 border border-green-200 p-4 flex items-center gap-3">
+                  <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <p className="text-sm font-medium text-green-800">Action items created automatically</p>
+                    <p className="text-xs text-green-600 mt-0.5">View them on the <a href="/follow-ups#action-items" className="underline font-medium">Follow-ups page</a>.</p>
+                  </div>
+                </div>
+
+                {submissions.filter(s => s.ai_analysis).map(s => {
+                  let parsed: { summary?: string; findings?: string[]; action_items?: { priority: string; action: string }[] } | null = null;
+                  try { parsed = JSON.parse(s.ai_analysis); } catch { /* legacy */ }
+
+                  return (
+                    <div key={s.id} className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 overflow-hidden">
+                      <div className="px-5 py-3 bg-gray-50 border-b border-gray-100 flex items-center gap-2">
+                        <svg className="w-4 h-4 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611l-.772.13a17.935 17.935 0 01-6.363 0l-.772-.13c-1.717-.293-2.3-2.379-1.067-3.61L12.6 15.3" />
+                        </svg>
+                        <span className="text-sm font-semibold text-gray-900">AI Analysis</span>
+                      </div>
+                      <div className="p-5 space-y-4">
+                        {parsed ? (
+                          <>
+                            {parsed.summary && (
+                              <p className="text-sm text-gray-700 leading-relaxed">{parsed.summary}</p>
+                            )}
+                            {parsed.findings && parsed.findings.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Key Findings</h4>
+                                <ul className="space-y-1.5">
+                                  {parsed.findings.map((f, i) => (
+                                    <li key={i} className="flex items-start gap-2 text-sm text-gray-600">
+                                      <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0" />
+                                      {f}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            {parsed.action_items && parsed.action_items.length > 0 && (
+                              <div>
+                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Action Items (Auto-Created)</h4>
+                                <div className="space-y-1.5">
+                                  {parsed.action_items.map((item, i) => {
+                                    const prioStyles: Record<string, string> = {
+                                      HIGH: 'bg-red-100 text-red-700',
+                                      MEDIUM: 'bg-amber-100 text-amber-700',
+                                      LOW: 'bg-gray-100 text-gray-600',
+                                    };
+                                    return (
+                                      <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-gray-50">
+                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 mt-0.5 ${prioStyles[item.priority?.toUpperCase()] || prioStyles.LOW}`}>
+                                          {(item.priority || 'LOW').toUpperCase()}
+                                        </span>
+                                        <span className="text-sm text-gray-700">{item.action}</span>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        ) : (
+                          <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-line">{s.ai_analysis}</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+        /* Self-assessment: prompt-slot-based UI */
+        <>
         <div className="space-y-3">
           {prompts.map(prompt => {
             const sub = submissionsByPrompt.get(prompt.id);
@@ -1036,6 +1290,8 @@ export function SelfAssessmentsContent() {
             )}
           </>
         )}
+        </>
+        )}
 
         {/* Delete confirmation modal */}
         {showDeleteConfirm && (
@@ -1054,7 +1310,7 @@ export function SelfAssessmentsContent() {
                   </div>
                 </div>
                 <p className="text-sm text-gray-600">
-                  Delete <strong>{detail.template_name}</strong> for {detail.store_name}?
+                  Delete <strong>{detail.is_quick ? `Quick Assessment${detail.area ? ` \u2013 ${detail.area}` : ''}` : detail.template_name}</strong> for {detail.store_name}?
                   Any linked action items will be preserved and marked as "assessment removed."
                 </p>
               </div>
@@ -1082,14 +1338,42 @@ export function SelfAssessmentsContent() {
         <p className="text-sm text-gray-500">
           Photo-based store assessments with AI evaluation.
         </p>
-        {(isAdmin || isManager) && (
-          <button onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors shadow-sm">
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-            </svg>
-            <span className="hidden sm:inline">New Assessment</span>
+        <div className="flex items-center gap-2">
+          {(isAdmin || isRegionalManager) && (
+            <button onClick={() => setShowQuickCreate(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-violet-600 text-white text-sm font-semibold hover:bg-violet-700 transition-colors shadow-sm">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+              </svg>
+              <span className="hidden sm:inline">Quick Assessment</span>
+            </button>
+          )}
+          {(isAdmin || isManager) && (
+            <button onClick={() => setShowCreate(true)} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary-600 text-white text-sm font-semibold hover:bg-primary-700 transition-colors shadow-sm">
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+              </svg>
+              <span className="hidden sm:inline">New Assessment</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Type filter */}
+      <div className="flex gap-1 mb-3 overflow-x-auto pb-1">
+        {([['all', 'All Types'], ['self', 'Self-Assessment'], ['quick', 'Quick Assessment']] as const).map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => setTypeFilter(key as AssessmentType | 'all')}
+            className={`px-3 py-1.5 rounded-full text-xs font-medium whitespace-nowrap transition-colors ${
+              typeFilter === key
+                ? 'bg-violet-600 text-white'
+                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {label}
           </button>
-        )}
+        ))}
       </div>
 
       {/* Status tabs */}
@@ -1124,7 +1408,7 @@ export function SelfAssessmentsContent() {
           <svg className="w-12 h-12 text-gray-300 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
           </svg>
-          <p className="mt-3 text-sm text-gray-500">No self-assessments yet.</p>
+          <p className="mt-3 text-sm text-gray-500">{typeFilter === 'quick' ? 'No quick assessments yet.' : typeFilter === 'self' ? 'No self-assessments yet.' : 'No assessments yet.'}</p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1140,7 +1424,12 @@ export function SelfAssessmentsContent() {
                 <div className="flex items-start justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900 truncate">{a.template_name}</h3>
+                      <h3 className="text-sm font-semibold text-gray-900 truncate">
+                        {a.is_quick ? `Quick Assessment${a.area ? ` \u2013 ${a.area}` : ''}` : a.template_name}
+                      </h3>
+                      {a.is_quick && (
+                        <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold bg-violet-100 text-violet-700">Quick</span>
+                      )}
                       <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${STATUS_STYLES[a.status]}`}>
                         {a.status}
                       </span>
@@ -1149,8 +1438,8 @@ export function SelfAssessmentsContent() {
                       {a.store_name} &middot; By: {a.submitted_by_name}
                     </p>
                     <p className="text-xs text-gray-400 mt-0.5">
-                      Due: {formatDate(a.due_date)}
-                      {a.submission_count !== undefined && ` \u00B7 ${a.submission_count} photo${a.submission_count !== 1 ? 's' : ''}`}
+                      {a.due_date ? `Due: ${formatDate(a.due_date)}` : ''}
+                      {a.submission_count !== undefined && `${a.due_date ? ' \u00B7 ' : ''}${a.submission_count} photo${a.submission_count !== 1 ? 's' : ''}`}
                     </p>
                   </div>
                   <svg className="w-4 h-4 text-gray-400 ml-2 flex-shrink-0 mt-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1225,6 +1514,43 @@ export function SelfAssessmentsContent() {
         </div>
       )}
 
+      {/* Quick Create Modal */}
+      {showQuickCreate && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowQuickCreate(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="px-6 py-4 border-b border-gray-100">
+              <h2 className="text-lg font-semibold text-gray-900">New Quick Assessment</h2>
+              <p className="text-xs text-gray-500 mt-1">Snap freeform photos at a store. AI will analyze them and auto-create action items.</p>
+            </div>
+            <div className="px-6 py-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Store</label>
+                <select value={quickCreateStore} onChange={e => setQuickCreateStore(e.target.value)} className="block w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-gray-900 shadow-sm focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 focus:outline-none sm:text-sm">
+                  <option value="">Select store...</option>
+                  {stores.filter(s => s.is_active).map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Area <span className="text-gray-400 font-normal">(optional)</span></label>
+                <input
+                  type="text"
+                  value={quickCreateArea}
+                  onChange={e => setQuickCreateArea(e.target.value)}
+                  placeholder="e.g. produce, bakery, front end..."
+                  className="block w-full rounded-lg border border-gray-300 px-3.5 py-2.5 text-gray-900 shadow-sm focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 focus:outline-none sm:text-sm"
+                />
+              </div>
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">
+              <button onClick={() => setShowQuickCreate(false)} className="rounded-lg px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
+              <button onClick={handleQuickCreate} disabled={creatingQuick || !quickCreateStore} className="rounded-lg bg-violet-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-violet-700 disabled:opacity-50 transition-colors">
+                {creatingQuick ? 'Creating...' : 'Create'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* List-level delete confirmation */}
       {listDeleteId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setListDeleteId(null)}>
@@ -1242,7 +1568,7 @@ export function SelfAssessmentsContent() {
                 </div>
               </div>
               <p className="text-sm text-gray-600">
-                Delete <strong>{assessments.find(a => a.id === listDeleteId)?.template_name}</strong> for {assessments.find(a => a.id === listDeleteId)?.store_name}?
+                Delete <strong>{(() => { const item = assessments.find(a => a.id === listDeleteId); return item?.is_quick ? `Quick Assessment${item.area ? ` \u2013 ${item.area}` : ''}` : item?.template_name; })()}</strong> for {assessments.find(a => a.id === listDeleteId)?.store_name}?
               </p>
             </div>
             <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3">

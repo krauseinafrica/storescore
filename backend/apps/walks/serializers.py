@@ -712,7 +712,7 @@ class SelfAssessmentTemplateDetailSerializer(serializers.ModelSerializer):
 
 
 class AssessmentSubmissionSerializer(serializers.ModelSerializer):
-    prompt_name = serializers.CharField(source='prompt.name', read_only=True)
+    prompt_name = serializers.SerializerMethodField()
     reviewed_by_name = serializers.CharField(source='reviewed_by.full_name', read_only=True, default='')
 
     class Meta:
@@ -726,9 +726,14 @@ class AssessmentSubmissionSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'ai_analysis', 'ai_rating', 'is_video', 'submitted_at',
                             'reviewed_by_name', 'reviewed_at']
 
+    def get_prompt_name(self, obj):
+        if obj.prompt:
+            return obj.prompt.name
+        return None
+
 
 class SelfAssessmentListSerializer(serializers.ModelSerializer):
-    template_name = serializers.CharField(source='template.name', read_only=True)
+    template_name = serializers.SerializerMethodField()
     store_name = serializers.CharField(source='store.name', read_only=True)
     submitted_by_name = serializers.CharField(source='submitted_by.full_name', read_only=True)
     submission_count = serializers.SerializerMethodField()
@@ -739,22 +744,29 @@ class SelfAssessmentListSerializer(serializers.ModelSerializer):
             'id', 'template', 'template_name', 'store', 'store_name',
             'submitted_by', 'submitted_by_name', 'status', 'due_date',
             'submitted_at', 'reviewed_at', 'submission_count',
+            'assessment_type', 'area',
             'created_at', 'updated_at',
         ]
         read_only_fields = fields
+
+    def get_template_name(self, obj):
+        if obj.template:
+            return obj.template.name
+        return None
 
     def get_submission_count(self, obj):
         return obj.submissions.count()
 
 
 class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
-    template_name = serializers.CharField(source='template.name', read_only=True)
+    template_name = serializers.SerializerMethodField()
     store_name = serializers.CharField(source='store.name', read_only=True)
     submitted_by_name = serializers.CharField(source='submitted_by.full_name', read_only=True)
     reviewed_by_name = serializers.SerializerMethodField()
     submissions = AssessmentSubmissionSerializer(many=True, read_only=True)
     prompts = serializers.SerializerMethodField()
     action_items_count = serializers.SerializerMethodField()
+    is_quick = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = SelfAssessment
@@ -763,7 +775,8 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
             'submitted_by', 'submitted_by_name', 'reviewed_by',
             'reviewed_by_name', 'status', 'due_date', 'submitted_at',
             'reviewed_at', 'reviewer_notes', 'submissions', 'prompts',
-            'action_items_count', 'created_at', 'updated_at',
+            'action_items_count', 'assessment_type', 'area', 'is_quick',
+            'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'submitted_at',
@@ -777,12 +790,19 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
             for field in ('template', 'store', 'submitted_by'):
                 self.fields[field].read_only = True
 
+    def get_template_name(self, obj):
+        if obj.template:
+            return obj.template.name
+        return None
+
     def get_reviewed_by_name(self, obj):
         if obj.reviewed_by:
             return obj.reviewed_by.full_name
         return None
 
     def get_prompts(self, obj):
+        if not obj.template_id:
+            return []
         return AssessmentPromptSerializer(
             obj.template.prompts.all(), many=True
         ).data

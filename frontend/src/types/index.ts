@@ -436,6 +436,7 @@ export interface ActionItemDetail extends ActionItem {
 // --- Feature 3: Self-Assessments ---
 
 export type AssessmentRating = 'good' | 'fair' | 'poor';
+export type AssessmentType = 'self' | 'quick';
 
 export interface AssessmentPrompt {
   id: string;
@@ -462,8 +463,8 @@ export interface SelfAssessmentTemplate {
 export interface AssessmentSubmission {
   id: string;
   assessment: string;
-  prompt: string;
-  prompt_name: string;
+  prompt: string | null;
+  prompt_name: string | null;
   image: string;
   is_video: boolean;
   caption: string;
@@ -481,8 +482,8 @@ export type SelfAssessmentStatus = 'pending' | 'submitted' | 'reviewed';
 
 export interface SelfAssessment {
   id: string;
-  template: string;
-  template_name: string;
+  template: string | null;
+  template_name: string | null;
   store: string;
   store_name: string;
   submitted_by: string;
@@ -490,7 +491,10 @@ export interface SelfAssessment {
   reviewed_by: string | null;
   reviewed_by_name: string | null;
   status: SelfAssessmentStatus;
-  due_date: string;
+  assessment_type: AssessmentType;
+  area: string;
+  is_quick?: boolean;
+  due_date: string | null;
   submitted_at: string | null;
   reviewed_at: string | null;
   reviewer_notes: string;

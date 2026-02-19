@@ -182,3 +182,23 @@ export async function getLeadFunnel(): Promise<LeadFunnel> {
   const response = await api.get<LeadFunnel>('/auth/platform/lead-funnel/');
   return response.data;
 }
+
+// ---------- AI Costs ----------
+
+export interface AICostData {
+  totals: {
+    total_cost: number;
+    total_calls: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+  };
+  by_provider: Array<{ provider: string; cost: number; calls: number }>;
+  by_call_type: Array<{ call_type: string; cost: number; calls: number }>;
+  by_org: Array<{ org_id: string; org_name: string; cost: number; calls: number }>;
+  monthly_trend: Array<{ month: string; cost: number; calls: number }>;
+}
+
+export async function getAICosts(): Promise<AICostData> {
+  const response = await api.get<AICostData>('/auth/platform/ai-costs/');
+  return response.data;
+}

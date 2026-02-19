@@ -1150,6 +1150,8 @@ Keep the analysis concise and actionable. Do not use markdown headers or bullet 
                     'content': content_blocks,
                 }],
             )
+            from .ai_costs import log_anthropic_usage
+            log_anthropic_usage(message, 'photo_score', organization=request.org, user=request.user)
 
             raw_text = message.content[0].text
 
@@ -1506,6 +1508,8 @@ STATUS: [RESOLVED or NEEDS_MORE_WORK]
                         ],
                     }],
                 )
+                from .ai_costs import log_anthropic_usage
+                log_anthropic_usage(message, 'action_verify', organization=request.org, user=request.user)
 
                 ai_analysis = message.content[0].text
                 photo.ai_analysis = ai_analysis
@@ -1745,7 +1749,9 @@ class SelfAssessmentViewSet(ModelViewSet):
     def get_permissions(self):
         if self.action in ('list', 'retrieve'):
             return [IsAuthenticated(), IsOrgMember(), HasFeature('self_assessments')]
-        if self.action in ('create', 'destroy'):
+        if self.action in ('create',):
+            return [IsAuthenticated(), IsOrgManagerOrAbove(), HasFeature('self_assessments')]
+        if self.action in ('destroy',):
             return [IsAuthenticated(), IsOrgAdmin(), HasFeature('self_assessments')]
         return [IsAuthenticated(), IsOrgManagerOrAbove(), HasFeature('self_assessments')]
 
@@ -1776,9 +1782,18 @@ class SelfAssessmentViewSet(ModelViewSet):
         if store:
             queryset = queryset.filter(store_id=store)
 
+        # Filter by assessment type
+        assessment_type = self.request.query_params.get('type')
+        if assessment_type in ('self', 'quick'):
+            queryset = queryset.filter(assessment_type=assessment_type)
+
         return queryset
 
     def perform_create(self, serializer):
+        from rest_framework.exceptions import PermissionDenied
+        assessment_type = self.request.data.get('assessment_type', 'self')
+        if assessment_type == 'self' and not IsOrgAdmin().has_permission(self.request, self):
+            raise PermissionDenied('Creating self-assessments requires admin role.')
         serializer.save(organization=self.request.org)
 
     @action(detail=True, methods=['post'], url_path='submit')
@@ -2186,7 +2201,10 @@ class AssessmentSubmissionView(APIView):
             return Response({'detail': 'No file provided.'}, status=400)
 
         prompt_id = request.data.get('prompt')
-        if not prompt_id:
+        is_quick = assessment.assessment_type == 'quick'
+
+        # Prompt is required for self-assessments, optional for quick
+        if not prompt_id and not is_quick:
             return Response({'detail': 'Prompt ID is required.'}, status=400)
 
         # Detect if this is a video upload
@@ -2199,19 +2217,19 @@ class AssessmentSubmissionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Replace existing submission for the same prompt if re-uploading
-        existing = AssessmentSubmission.objects.filter(
-            assessment=assessment, prompt_id=prompt_id,
-        ).first()
-        if existing:
-            # Delete old file
-            if existing.image:
-                existing.image.delete(save=False)
-            existing.delete()
+        # For self-assessments, replace existing submission for same prompt
+        if not is_quick and prompt_id:
+            existing = AssessmentSubmission.objects.filter(
+                assessment=assessment, prompt_id=prompt_id,
+            ).first()
+            if existing:
+                if existing.image:
+                    existing.image.delete(save=False)
+                existing.delete()
 
         submission = AssessmentSubmission(
             assessment=assessment,
-            prompt_id=prompt_id,
+            prompt_id=prompt_id if prompt_id else None,
             organization=request.org,
             caption=request.data.get('caption', ''),
             self_rating=request.data.get('self_rating', ''),

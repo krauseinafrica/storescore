@@ -3,12 +3,20 @@ import { useLocation, useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import TabBar from '../components/TabBar';
 import InfoButton from '../components/InfoButton';
+import FeatureGate from '../components/FeatureGate';
 import { WalksListContent } from './walks/WalkList';
 import { SelfAssessmentsContent } from './SelfAssessments';
 import { SchedulesContent } from './Schedules';
 import { getDepartmentWalks } from '../api/walks';
 import { getOrgId } from '../utils/org';
 import type { Walk } from '../types';
+
+const TAB_DESCRIPTIONS: Record<string, string> = {
+  walks: 'Comprehensive scored walkthrough of an entire store using your scoring template. Action items are auto-created for low scores.',
+  department: 'Quick evaluation of a specific department (e.g. produce, bakery). Uses department-specific criteria.',
+  assessments: 'Photo-based compliance checks — staff photograph store conditions and AI evaluates them.',
+  schedules: 'Set up recurring evaluations that auto-assign to evaluators on a schedule.',
+};
 
 // ---------- Department Evaluations Tab Content ----------
 
@@ -216,8 +224,12 @@ export default function Evaluations() {
 
       <TabBar tabs={TABS} activeTab={activeTab} onChange={handleTabChange} />
 
+      {TAB_DESCRIPTIONS[activeTab] && (
+        <p className="text-xs text-gray-400 mt-2 mb-3">{TAB_DESCRIPTIONS[activeTab]}</p>
+      )}
+
       {isAdmin && configLink && (
-        <div className="flex justify-end mb-4 -mt-2">
+        <div className="flex justify-end mb-4 -mt-1">
           <Link
             to={configLink.path}
             className="text-xs text-gray-400 hover:text-primary-600 transition-colors"
@@ -229,8 +241,16 @@ export default function Evaluations() {
 
       {activeTab === 'walks' && <WalksListContent />}
       {activeTab === 'department' && <DepartmentEvalsContent />}
-      {activeTab === 'assessments' && <SelfAssessmentsContent />}
-      {activeTab === 'schedules' && <SchedulesContent />}
+      {activeTab === 'assessments' && (
+        <FeatureGate feature="self_assessments" requiredPlan="Enterprise">
+          <SelfAssessmentsContent />
+        </FeatureGate>
+      )}
+      {activeTab === 'schedules' && (
+        <FeatureGate feature="evaluation_schedules" requiredPlan="Pro">
+          <SchedulesContent />
+        </FeatureGate>
+      )}
     </div>
   );
 }

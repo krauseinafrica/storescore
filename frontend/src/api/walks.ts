@@ -927,12 +927,24 @@ export async function getAssessment(
 
 export async function createAssessment(
   orgId: string,
-  data: { template: string; store: string; submitted_by: string; due_date: string }
+  data: { template?: string; store: string; submitted_by: string; due_date?: string; assessment_type?: string; area?: string }
 ): Promise<SelfAssessment> {
   const response = await api.post<SelfAssessment>('/walks/assessments/', data, {
     headers: { 'X-Organization': orgId },
   });
   return response.data;
+}
+
+export async function createQuickAssessment(
+  orgId: string,
+  data: { store: string; submitted_by: string; area?: string }
+): Promise<SelfAssessment> {
+  return createAssessment(orgId, {
+    store: data.store,
+    submitted_by: data.submitted_by,
+    assessment_type: 'quick',
+    area: data.area || '',
+  });
 }
 
 export async function submitAssessment(
@@ -972,14 +984,14 @@ export async function deleteAssessment(
 export async function uploadAssessmentSubmission(
   orgId: string,
   assessmentId: string,
-  promptId: string,
+  promptId: string | null,
   file: File,
   caption?: string,
   selfRating?: string
 ): Promise<AssessmentSubmission> {
   const formData = new FormData();
   formData.append('image', file);
-  formData.append('prompt', promptId);
+  if (promptId) formData.append('prompt', promptId);
   if (caption) formData.append('caption', caption);
   if (selfRating) formData.append('self_rating', selfRating);
   const response = await api.post<AssessmentSubmission>(

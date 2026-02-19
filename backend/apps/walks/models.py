@@ -934,10 +934,18 @@ class SelfAssessment(OrgScopedModel):
         SUBMITTED = 'submitted', 'Submitted'
         REVIEWED = 'reviewed', 'Reviewed'
 
+    class Type(models.TextChoices):
+        SELF = 'self', 'Self-Assessment'
+        QUICK = 'quick', 'Quick Assessment'
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assessment_type = models.CharField(
+        max_length=10, choices=Type.choices, default=Type.SELF,
+    )
     template = models.ForeignKey(
         SelfAssessmentTemplate, on_delete=models.PROTECT,
         related_name='assessments',
+        null=True, blank=True,
     )
     store = models.ForeignKey(
         'stores.Store', on_delete=models.CASCADE, related_name='self_assessments',
@@ -953,7 +961,8 @@ class SelfAssessment(OrgScopedModel):
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.PENDING,
     )
-    due_date = models.DateField()
+    area = models.CharField(max_length=255, blank=True, default='')
+    due_date = models.DateField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     reviewed_at = models.DateTimeField(null=True, blank=True)
     reviewer_notes = models.TextField(blank=True, default='')
@@ -963,7 +972,13 @@ class SelfAssessment(OrgScopedModel):
         ordering = ['-due_date']
 
     def __str__(self):
-        return f'{self.template.name} - {self.store.name} ({self.status})'
+        if self.template:
+            return f'{self.template.name} - {self.store.name} ({self.status})'
+        return f'Quick ({self.area or "general"}) - {self.store.name} ({self.status})'
+
+    @property
+    def is_quick(self):
+        return self.assessment_type == self.Type.QUICK
 
 
 class AssessmentSubmission(OrgScopedModel):
@@ -982,7 +997,9 @@ class AssessmentSubmission(OrgScopedModel):
         SelfAssessment, on_delete=models.CASCADE, related_name='submissions',
     )
     prompt = models.ForeignKey(
-        AssessmentPrompt, on_delete=models.CASCADE, related_name='submissions',
+        AssessmentPrompt, on_delete=models.SET_NULL,
+        related_name='submissions',
+        null=True, blank=True,
     )
     image = models.FileField(upload_to=assessment_photo_path)
     is_video = models.BooleanField(default=False)
@@ -1014,7 +1031,8 @@ class AssessmentSubmission(OrgScopedModel):
         ordering = ['submitted_at']
 
     def __str__(self):
-        return f'{self.prompt.name} submission for {self.assessment}'
+        label = self.prompt.name if self.prompt else 'Quick photo'
+        return f'{label} submission for {self.assessment}'
 
 
 # ==================== Feature 4: Corrective Action Escalation ====================
@@ -1157,3 +1175,42 @@ class Driver(OrgScopedModel):
 
     def __str__(self):
         return f'{self.criterion.name} - {self.name}'
+
+
+# ==================== AI Usage Tracking ====================
+
+
+class AIUsageLog(TimestampedModel):
+    """Tracks token usage and estimated cost for AI API calls."""
+
+    PROVIDER_CHOICES = [
+        ('anthropic', 'Anthropic'),
+        ('google', 'Google'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    organization = models.ForeignKey(
+        'accounts.Organization',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='ai_usage_logs',
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='ai_usage_logs',
+    )
+    provider = models.CharField(max_length=20, choices=PROVIDER_CHOICES)
+    model_name = models.CharField(max_length=100)
+    call_type = models.CharField(max_length=50)
+    input_tokens = models.PositiveIntegerField(default=0)
+    output_tokens = models.PositiveIntegerField(default=0)
+    estimated_cost = models.DecimalField(max_digits=10, decimal_places=6)
+
+    class Meta:
+        db_table = 'walks_aiusagelog'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'{self.provider}/{self.model_name} - {self.call_type} (${self.estimated_cost})'

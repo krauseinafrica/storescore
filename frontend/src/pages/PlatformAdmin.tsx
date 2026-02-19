@@ -10,6 +10,7 @@ import {
   importPlatformOrgStores,
   getEngagementStats,
   getLeadFunnel,
+  getAICosts,
 } from '../api/platform';
 import type {
   PlatformStats,
@@ -18,6 +19,7 @@ import type {
   StoreImportResult,
   EngagementStats,
   LeadFunnel,
+  AICostData,
 } from '../api/platform';
 import { getLeads, updateLeadStatus } from '../api/integrations';
 import { getTickets, updateTicketStatus, updateTicket } from '../api/support';
@@ -25,6 +27,7 @@ import type { SupportTicket } from '../api/support';
 import type { Lead } from '../types';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell,
+  AreaChart, Area,
 } from 'recharts';
 import { ChartContainer } from '../components/charts/ChartContainer';
 import { ChartTooltipContent } from '../components/charts/ChartTooltip';
@@ -755,6 +758,7 @@ const PIE_COLORS = ['#D40029', '#22c55e', '#6b7280'];
 function DashboardTab() {
   const [engagement, setEngagement] = useState<EngagementStats | null>(null);
   const [funnel, setFunnel] = useState<LeadFunnel | null>(null);
+  const [aiCosts, setAiCosts] = useState<AICostData | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -762,8 +766,9 @@ function DashboardTab() {
     Promise.all([
       getEngagementStats().catch(() => null),
       getLeadFunnel().catch(() => null),
+      getAICosts().catch(() => null),
     ])
-      .then(([e, f]) => { setEngagement(e); setFunnel(f); })
+      .then(([e, f, ai]) => { setEngagement(e); setFunnel(f); setAiCosts(ai); })
       .finally(() => setLoading(false));
   }, []);
 
@@ -900,6 +905,130 @@ function DashboardTab() {
           </div>
         )}
       </div>
+
+      {/* AI Usage & Costs */}
+      {aiCosts && (
+        <div className="mt-6">
+          <h3 className="text-sm font-semibold text-gray-900 mb-3">AI Usage & Costs</h3>
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+            <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+              <p className="text-xs font-medium text-gray-500">Total Spend</p>
+              <p className="text-xl font-bold text-gray-900 mt-1">${aiCosts.totals.total_cost.toFixed(2)}</p>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+              <p className="text-xs font-medium text-gray-500">Total Calls</p>
+              <p className="text-xl font-bold text-gray-900 mt-1">{aiCosts.totals.total_calls.toLocaleString()}</p>
+            </div>
+            {aiCosts.by_provider.map((p) => (
+              <div key={p.provider} className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4">
+                <p className="text-xs font-medium text-gray-500">{p.provider === 'anthropic' ? 'Anthropic' : 'Google'}</p>
+                <p className="text-xl font-bold text-gray-900 mt-1">${p.cost.toFixed(2)}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{p.calls.toLocaleString()} calls</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Monthly cost trend */}
+            {aiCosts.monthly_trend.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-5">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">Monthly Cost Trend</h3>
+                <ChartContainer
+                  config={{ cost: { label: 'Cost ($)', color: '#D40029' } }}
+                  className="h-48"
+                >
+                  <AreaChart data={aiCosts.monthly_trend}>
+                    <defs>
+                      <linearGradient id="aiCostGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#D40029" stopOpacity={0.2} />
+                        <stop offset="95%" stopColor="#D40029" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <XAxis
+                      dataKey="month"
+                      tick={{ fontSize: 11 }}
+                      tickFormatter={(v: string) => {
+                        const [y, m] = v.split('-');
+                        return new Date(Number(y), Number(m) - 1).toLocaleDateString('en-US', { month: 'short' });
+                      }}
+                    />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={(v: number) => `$${v}`} />
+                    <Tooltip
+                      content={<ChartTooltipContent
+                        labelFormatter={(l) => {
+                          const [y, m] = String(l).split('-');
+                          return new Date(Number(y), Number(m) - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+                        }}
+                        valueFormatter={(v) => `$${v.toFixed(2)}`}
+                      />}
+                    />
+                    <Area type="monotone" dataKey="cost" stroke="#D40029" fill="url(#aiCostGrad)" strokeWidth={2} />
+                  </AreaChart>
+                </ChartContainer>
+              </div>
+            )}
+
+            {/* Cost by call type */}
+            {aiCosts.by_call_type.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-5">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">Cost by Feature</h3>
+                <ChartContainer
+                  config={{ cost: { label: 'Cost ($)', color: '#7c3aed' } }}
+                  className="h-48"
+                >
+                  <BarChart data={aiCosts.by_call_type} layout="vertical">
+                    <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v: number) => `$${v}`} />
+                    <YAxis
+                      dataKey="call_type"
+                      type="category"
+                      tick={{ fontSize: 11 }}
+                      width={100}
+                      tickFormatter={(v: string) => v.replace(/_/g, ' ')}
+                    />
+                    <Tooltip
+                      content={<ChartTooltipContent
+                        valueFormatter={(v) => `$${v.toFixed(2)}`}
+                      />}
+                    />
+                    <Bar dataKey="cost" name="Cost" fill="#7c3aed" radius={[0, 4, 4, 0]} />
+                  </BarChart>
+                </ChartContainer>
+              </div>
+            )}
+
+            {/* Cost by org */}
+            {aiCosts.by_org.length > 0 && (
+              <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-5 lg:col-span-2">
+                <h3 className="text-sm font-semibold text-gray-900 mb-4">Top Organizations by AI Spend</h3>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-gray-100">
+                        <th className="text-left text-xs font-medium text-gray-500 pb-2">Organization</th>
+                        <th className="text-right text-xs font-medium text-gray-500 pb-2">Cost</th>
+                        <th className="text-right text-xs font-medium text-gray-500 pb-2">Calls</th>
+                        <th className="text-right text-xs font-medium text-gray-500 pb-2">Avg/Call</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-50">
+                      {aiCosts.by_org.map((org) => (
+                        <tr key={org.org_id}>
+                          <td className="py-2 text-gray-900 font-medium">{org.org_name}</td>
+                          <td className="py-2 text-right text-gray-700">${org.cost.toFixed(2)}</td>
+                          <td className="py-2 text-right text-gray-500">{org.calls.toLocaleString()}</td>
+                          <td className="py-2 text-right text-gray-400">${org.calls > 0 ? (org.cost / org.calls).toFixed(4) : '0'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

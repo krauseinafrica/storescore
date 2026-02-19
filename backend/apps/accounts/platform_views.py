@@ -831,3 +831,75 @@ class EmailCaptureView(APIView):
             'id': str(lead.id),
             'message': 'Thanks! We\'ll be in touch.',
         }, status=status.HTTP_201_CREATED)
+
+
+class PlatformAICostView(APIView):
+    """GET /api/v1/auth/platform/ai-costs/ — AI usage and cost dashboard."""
+    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get(self, request):
+        from django.db.models import Count, Sum
+        from django.db.models.functions import TruncMonth
+
+        from apps.walks.models import AIUsageLog
+
+        qs = AIUsageLog.objects.all()
+
+        # Totals
+        totals = qs.aggregate(
+            total_cost=Sum('estimated_cost'),
+            total_calls=Count('id'),
+            total_input_tokens=Sum('input_tokens'),
+            total_output_tokens=Sum('output_tokens'),
+        )
+        totals = {k: (v or 0) for k, v in totals.items()}
+        totals['total_cost'] = float(totals['total_cost'])
+
+        # By provider
+        by_provider = list(
+            qs.values('provider')
+            .annotate(cost=Sum('estimated_cost'), calls=Count('id'))
+            .order_by('-cost')
+        )
+        for row in by_provider:
+            row['cost'] = float(row['cost'] or 0)
+
+        # By call type
+        by_call_type = list(
+            qs.values('call_type')
+            .annotate(cost=Sum('estimated_cost'), calls=Count('id'))
+            .order_by('-cost')
+        )
+        for row in by_call_type:
+            row['cost'] = float(row['cost'] or 0)
+
+        # By org (top 20)
+        by_org = list(
+            qs.filter(organization__isnull=False)
+            .values('organization__id', 'organization__name')
+            .annotate(cost=Sum('estimated_cost'), calls=Count('id'))
+            .order_by('-cost')[:20]
+        )
+        for row in by_org:
+            row['org_id'] = str(row.pop('organization__id'))
+            row['org_name'] = row.pop('organization__name')
+            row['cost'] = float(row['cost'] or 0)
+
+        # Monthly trend
+        monthly_trend = list(
+            qs.annotate(month=TruncMonth('created_at'))
+            .values('month')
+            .annotate(cost=Sum('estimated_cost'), calls=Count('id'))
+            .order_by('month')
+        )
+        for row in monthly_trend:
+            row['month'] = row['month'].strftime('%Y-%m')
+            row['cost'] = float(row['cost'] or 0)
+
+        return Response({
+            'totals': totals,
+            'by_provider': by_provider,
+            'by_call_type': by_call_type,
+            'by_org': by_org,
+            'monthly_trend': monthly_trend,
+        })

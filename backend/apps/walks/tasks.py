@@ -28,6 +28,7 @@ def process_walk_completion(self, walk_id: str, recipient_emails: list[str]):
         walk = Walk.objects.select_related(
             'store__organization',
             'template',
+            'department',
             'conducted_by',
         ).get(id=walk_id)
     except Walk.DoesNotExist:
@@ -50,9 +51,21 @@ def process_walk_completion(self, walk_id: str, recipient_emails: list[str]):
         logger.info(f'Sending walk email to {recipient_emails}')
         send_walk_email(walk, summary, recipient_emails)
 
-    # Auto-generate action items for low scores
-    from .services import auto_generate_action_items
-    auto_generate_action_items(walk)
+    # Auto-generate action items for low scores (only if plan includes action_items)
+    try:
+        from apps.billing.models import Subscription
+        sub = Subscription.objects.select_related('plan').filter(
+            organization=walk.organization,
+        ).first()
+        has_action_items = sub and sub.plan.has_feature('action_items')
+    except Exception:
+        has_action_items = True  # default to generating if billing check fails
+
+    if has_action_items:
+        from .services import auto_generate_action_items
+        auto_generate_action_items(walk)
+    else:
+        logger.info(f'Skipping action item generation for walk {walk.id} — plan lacks action_items feature')
 
 
 @shared_task(bind=True, max_retries=2, default_retry_delay=60)
@@ -469,6 +482,7 @@ def process_assessment_submissions(self, assessment_id: str):
     from google import genai
     client = genai.Client(api_key=settings.GEMINI_API_KEY)
 
+    is_quick = assessment.assessment_type == 'quick'
     submissions = assessment.submissions.select_related('prompt').all()
 
     for submission in submissions:
@@ -478,10 +492,20 @@ def process_assessment_submissions(self, assessment_id: str):
         is_video = getattr(submission, 'is_video', False)
         media_type = 'video' if is_video else 'photo'
 
-        prompt_text = submission.prompt.ai_evaluation_prompt or (
-            f'Evaluate this {media_type} of "{submission.prompt.name}" at a retail store. '
-            f'Is it in good, fair, or poor condition?'
-        )
+        if submission.prompt and submission.prompt.ai_evaluation_prompt:
+            prompt_text = submission.prompt.ai_evaluation_prompt
+        elif submission.prompt:
+            prompt_text = (
+                f'Evaluate this {media_type} of "{submission.prompt.name}" at a retail store. '
+                f'Is it in good, fair, or poor condition?'
+            )
+        else:
+            # Quick assessment — freeform prompt
+            area_label = assessment.area or 'general area'
+            prompt_text = (
+                f'Evaluate this {media_type} taken at {assessment.store.name} in the {area_label}. '
+                f'Identify issues, severity, and corrective actions.'
+            )
 
         try:
             file_bytes = submission.image.read()
@@ -528,10 +552,12 @@ def process_assessment_submissions(self, assessment_id: str):
                 'display quality, signage, cleanliness, and overall condition of the area shown.'
             ) if is_video else ''
 
+            area_label = submission.prompt.name if submission.prompt else (assessment.area or 'General Area')
+
             full_prompt = f"""{prompt_text}{video_context}
 
 Store: {assessment.store.name}
-Area: {submission.prompt.name}
+Area: {area_label}
 {f'Manager notes: {submission.caption}' if submission.caption else ''}
 
 Respond with ONLY valid JSON (no markdown fences, no extra text) in this exact format:
@@ -557,6 +583,8 @@ Be specific about what you actually see. Reference actual products, shelf positi
                     full_prompt,
                 ],
             )
+            from .ai_costs import log_gemini_usage
+            log_gemini_usage(response, 'assessment', organization=assessment.organization, user=assessment.submitted_by)
 
             raw_text = response.text.strip()
 
@@ -590,6 +618,13 @@ Be specific about what you actually see. Reference actual products, shelf positi
 
     logger.info(f'Assessment {assessment_id}: AI evaluation complete for {submissions.count()} submissions')
 
+    # For quick assessments, auto-create action items from AI findings
+    if is_quick:
+        try:
+            _auto_create_quick_assessment_action_items(assessment)
+        except Exception as e:
+            logger.error(f'Failed to auto-create action items for quick assessment {assessment_id}: {e}')
+
     # Send review notification email
     try:
         from .services import send_assessment_review_notification
@@ -597,6 +632,79 @@ Be specific about what you actually see. Reference actual products, shelf positi
         send_assessment_review_notification(assessment)
     except Exception as e:
         logger.error(f'Failed to send assessment review notification for {assessment_id}: {e}')
+
+
+def _auto_create_quick_assessment_action_items(assessment):
+    """
+    After AI analysis completes for quick assessments, auto-create action items
+    from AI-suggested findings in each submission's ai_analysis JSON.
+    """
+    import json
+
+    from apps.accounts.models import StoreAssignment
+    from apps.stores.models import OrgSettings
+
+    from .models import ActionItem
+
+    # Get org-level configurable deadlines
+    try:
+        org_settings = OrgSettings.objects.get(organization=assessment.organization)
+        PRIORITY_DUE_DAYS = {
+            'critical': org_settings.action_item_deadline_critical,
+            'high': org_settings.action_item_deadline_high,
+            'medium': org_settings.action_item_deadline_medium,
+            'low': org_settings.action_item_deadline_low,
+        }
+    except OrgSettings.DoesNotExist:
+        PRIORITY_DUE_DAYS = {'critical': 1, 'high': 3, 'medium': 7, 'low': 14}
+
+    # Find store manager to assign to
+    assignment = StoreAssignment.objects.filter(
+        store=assessment.store,
+        membership__organization=assessment.organization,
+        membership__role__in=['store_manager', 'manager'],
+    ).select_related('membership__user').first()
+    assigned_to = assignment.membership.user if assignment else None
+
+    created_items = []
+    for submission in assessment.submissions.all():
+        if not submission.ai_analysis:
+            continue
+        try:
+            parsed = json.loads(submission.ai_analysis)
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        ai_actions = parsed.get('action_items', [])
+        for ai_item in ai_actions:
+            priority = ai_item.get('priority', 'medium').lower()
+            if priority not in PRIORITY_DUE_DAYS:
+                priority = 'medium'
+            due_days = PRIORITY_DUE_DAYS[priority]
+
+            action_item = ActionItem.objects.create(
+                organization=assessment.organization,
+                assessment=assessment,
+                store=assessment.store,
+                assigned_to=assigned_to,
+                created_by=assessment.submitted_by,
+                status='open',
+                priority=priority,
+                description=ai_item.get('action', ''),
+                due_date=(timezone.now() + timedelta(days=due_days)).date(),
+                is_manual=False,
+            )
+            created_items.append({
+                'description': action_item.description,
+                'priority': action_item.priority,
+                'due_date': str(action_item.due_date),
+            })
+
+    if created_items and assigned_to:
+        from .services import send_action_items_notification
+        send_action_items_notification(assessment, created_items, assigned_to)
+
+    logger.info(f'Quick assessment {assessment.id}: auto-created {len(created_items)} action items')
 
 
 # ==================== Feature 4: SOP Document Processing ====================
@@ -735,6 +843,8 @@ If no criteria match, return an empty array: []"""
             max_tokens=2000,
             messages=[{'role': 'user', 'content': prompt}],
         )
+        from .ai_costs import log_anthropic_usage
+        log_anthropic_usage(message, 'sop_link', organization=sop.organization)
 
         raw = message.content[0].text.strip()
         # Extract JSON from response (handle markdown code blocks)
