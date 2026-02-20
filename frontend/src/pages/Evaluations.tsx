@@ -224,11 +224,11 @@ export default function Evaluations() {
 
       <TabBar tabs={TABS} activeTab={activeTab} onChange={handleTabChange} />
 
-      {TAB_DESCRIPTIONS[activeTab] && (
+      {TAB_DESCRIPTIONS[activeTab] && !hasAssessmentParam && (
         <p className="text-xs text-gray-400 mt-2 mb-3">{TAB_DESCRIPTIONS[activeTab]}</p>
       )}
 
-      {isAdmin && configLink && (
+      {isAdmin && configLink && !hasAssessmentParam && (
         <div className="flex justify-end mb-4 -mt-1">
           <Link
             to={configLink.path}

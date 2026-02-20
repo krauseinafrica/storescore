@@ -158,32 +158,56 @@ AI-powered store quality management platform for multi-location retailers, resta
 - [x] Frontend: "Manages: [Region]" badge on Team page
 
 ## Phase 5.3: Location Verification — GPS + QR Code (COMPLETE)
-*Warn-but-allow for GPS, QR code alternative, org-configurable per store*
+*GPS enforcement, QR camera scanning, org-configurable per store*
 
 - [x] Store model: `qr_verification_token` (UUID, unique, regenerable)
 - [x] Store model: `verification_method` (gps_only, qr_only, gps_and_qr, either)
 - [x] Walk model: `qr_verified`, `qr_scanned_at`
 - [x] GPS capture during walk creation (send coords with createWalk)
-- [x] LocationWarningModal — shows distance warning if > 500m from store
+- [x] LocationWarningModal — shows distance warning if > radius from store
 - [x] `verify-qr` action on WalkViewSet
 - [x] `regenerate-qr` and `qr-code` actions on StoreViewSet
 - [x] Geocoding utility (Nominatim/OpenStreetMap, rate-limited)
 - [x] `geocode` action on StoreViewSet (auto-fill lat/lng from address)
 - [x] Frontend: verification badges in walk list (GPS Verified / QR Verified / Unverified)
-- [ ] Frontend: QR scanner integration (BarcodeDetector API or html5-qrcode)
+- [x] **GPS enforcement modes** (advisory vs strict) on OrgSettings
+  - [x] `location_enforcement` field: advisory (warn only) or strict (block walk)
+  - [x] `verification_radius_meters` field: configurable 50-5000m (default 500m)
+  - [x] Backend: `perform_create` and `start_walk` enforce strict mode — 403 if too far
+  - [x] Backend: respects `store.verification_method` (skip GPS check for qr_only stores)
+  - [x] Frontend: LocationWarningModal strict mode (no "Continue Anyway", only "Go Back")
+  - [x] Frontend: Settings page — Location Verification card (Advisory/Strict toggle, radius slider)
+- [x] **QR Scanner component** (html5-qrcode library)
+  - [x] Camera-based QR scanning with back camera auto-detection
+  - [x] UUID extraction from scanned data (raw UUID or URL-embedded)
+  - [x] Manual entry fallback below camera view
+  - [x] Error states: camera denied, no camera found
+  - [x] NewWalk.tsx: "Scan QR Code" primary button + "Enter manually" secondary
+  - [x] Auto-verify on successful scan
 - [ ] Frontend: verification details in WalkDetail page
 - [ ] Printable QR code endpoint (PDF/PNG)
 
 ## Phase 5.4: Public-Facing Pages (COMPLETE)
-*Features, Pricing, Request Demo — brand-neutral language for broader market*
+*Features, Pricing, Request Demo — hardware/retail franchise focused*
 
 - [x] PublicLayout component (header, footer, responsive nav)
-- [x] Features page (8 feature sections with icons and descriptions)
-- [x] Pricing page (4 tiers: Free/Starter/Pro/Enterprise, monthly/annual toggle)
+- [x] Features page (12 feature sections: walks, quick assessments, AI photo analysis, dept evals, AI summaries, gamification, team, reporting, action items, scheduling, SOPs, integrations)
+- [x] Pricing page (3 tiers: Starter/Pro/Enterprise, monthly/annual toggle, calculator)
+  - [x] Self-assessments correctly listed under Enterprise tier (not Pro)
+  - [x] Quick Assessments (AI) in Enterprise tier
 - [x] Request Demo page (lead capture form)
 - [x] Public routes in App.tsx (/features, /pricing, /request-demo)
-- [ ] SEO: react-helmet-async for per-page meta tags
-- [ ] Landing page update (link to Features/Pricing/Request Demo)
+- [x] Home page — Ace Hardware / hardware retail focused messaging
+  - [x] Hero: "Keep every store consistently excellent"
+  - [x] How It Works: template setup, GPS-verified on-site evaluation, AI analysis
+  - [x] Industry verticals led by Hardware & Home Improvement
+  - [x] SEO: hardware, retail, franchise keywords
+- [x] Tour page — 10 interactive sections (added Photo Assessments + Gamification)
+  - [x] Photo Assessment mockup with AI analysis and auto-generated action items
+  - [x] Gamification mockup with leaderboard podium, rankings, and badges
+- [x] SEO: react-helmet-async for per-page meta tags (SEO component with OG + Twitter cards on all public pages)
+- [x] Landing page update (link to Features/Pricing/Request Demo — nav + footer)
+- [x] Competitor comparison pages (/compare/bindy, /compare/safetyculture)
 
 ## Phase 5.5: Lead Capture & Demo System (COMPLETE)
 *Auto-provisioned demo organizations for prospective customers*
@@ -354,6 +378,34 @@ AI-powered store quality management platform for multi-location retailers, resta
 - [x] Frontend: Resolution time display
 - [x] Frontend: ActionItems list with `pending_review` and `approved` status tabs + badges
 
+## Phase 5.75c: AI Suggestion Review Flow (COMPLETE)
+*Replace auto-creation of action items from quick assessments with accept/dismiss review flow*
+
+- [x] **Backend: DismissedSuggestion model** — tracks dismissed AI suggestions for analytics
+  - `assessment` FK, `store` FK, `description`, `priority`, `reason` (not_relevant/already_handled/low_priority/other), `dismissed_by`
+- [x] **Backend: `suggestions_reviewed` field** on SelfAssessment — True once all suggestions accepted/dismissed
+- [x] **Backend: `dismiss-suggestions` endpoint** — POST to dismiss selected items, auto-marks reviewed when all handled
+- [x] **Backend: Removed auto-creation** of action items from quick assessments (`_auto_create_quick_assessment_action_items` call removed from tasks.py)
+- [x] **Backend: `accepted_descriptions` / `dismissed_descriptions`** returned in detail serializer for state reconstruction on page load
+- [x] **Frontend: Per-item accept/dismiss UI** — checkboxes for bulk accept, dismiss buttons per-item
+- [x] **Frontend: Editable action item text** — textarea + priority dropdown appear when item is selected, letting users tweak AI suggestions before accepting
+- [x] **Frontend: State persistence on refresh** — accepted/dismissed state reconstructed from backend data via description matching
+- [x] **Frontend: Summary banner** when `suggestions_reviewed=true` ("N action items accepted, M dismissed")
+- [x] Walk-based action items (from low scores) continue to auto-create unchanged
+
+## Phase 5.75d: Billing & Settings Fixes (COMPLETE)
+*Billing checkout flow, settings UX, upload reliability*
+
+- [x] **Billing: No duplicate trials** — active/trialing subscribers redirected to Stripe Customer Portal for plan changes instead of new checkout
+- [x] **Billing: Trial only for new customers** — `trial_period_days` only added when `trial_start` is null
+- [x] **Billing: Fixed premature plan update** — checkout no longer updates local subscription before Stripe confirms payment
+- [x] **Billing: "Select Plan" button** for active subscribers (opens Portal), "Get Started" only for new customers
+- [x] **Billing: "Most Popular" badge** moved to Enterprise tier
+- [x] **Settings: Hash-based tabs** — `/settings#goals`, `/settings#settings` persist on refresh
+- [x] **Evaluations: Config link hidden** in assessment detail view (`!hasAssessmentParam` guard)
+- [x] **Upload fix**: Restored `Content-Type: 'multipart/form-data'` header (removal caused axios to fall back to `application/json`), added 60s timeout
+- [x] **Features page**: Added screenshots for AI Photo Analysis (knife dept), Action Items (detail + list views)
+
 ## Phase 5.8: Advanced Reports & Analytics (COMPLETE)
 *Multi-tab reporting with drill-down, action item insights, driver analytics*
 
@@ -464,19 +516,42 @@ The ultimate insight StoreScore unlocks:
 - [ ] Automated follow-up reminders based on AI recommendations
 - [ ] Price tag / signage reading mode (1024px for fine text)
 
-## Phase 8: Store Gamification (LARGELY COMPLETE)
+## Phase 7.5: Vendor / External Sharing (FUTURE)
+*Share assessments and action items with external vendors without requiring user accounts*
+
+Use case: A knife display in-store is managed by an external vendor. The store or leadership wants to notify the vendor about issues found during an assessment and copy them on fixes — without giving them a full StoreScore account.
+
+- [ ] **Secure share links** — generate time-limited, token-based URLs for specific assessments or action items
+  - Read-only view of assessment findings, photos, and AI analysis
+  - No login required — protected by unique token (e.g., `/share/{token}`)
+  - Configurable expiration (7d, 30d, 90d, or until resolved)
+- [ ] **Email to vendor** — send assessment summary directly to vendor email
+  - "Share with Vendor" button on assessment detail page
+  - Branded email with findings, photos, and secure link to full assessment
+  - CC store manager and/or regional manager
+  - Track email opens / link clicks for accountability
+- [ ] **Vendor response** — optional vendor acknowledgment flow
+  - Vendor can leave a comment/response via the shared link (no account needed)
+  - Response notification sent to store manager / admin
+  - Comment appears in action item timeline
+- [ ] **Vendor contacts** — manage recurring vendors per store or department
+  - Store-level vendor contacts (name, email, department/category)
+  - Quick-select vendor when sharing assessments
+  - Track which vendors have been notified and their response history
+
+## Phase 8: Store Gamification (COMPLETE — polish remaining)
 *Competition, achievements, and engagement features*
 
 - [x] Leaderboards — auto-generated rankings by walk scores, improvement rate, consistency
   - [x] Scoped by org, region, or platform-wide
   - [x] 4 leaderboard types: avg_score, walk_count, most_improved, consistency
-  - [ ] Streaks leaderboard (consecutive weeks with walks)
+  - [x] Streaks leaderboard (consecutive weeks with walks — dynamic calculation, 104-week lookback)
   - [ ] Periodic leaderboard caching (Celery task, every 6 hours)
 - [x] Challenges — admin-created time-bound competitions
   - [x] Challenge model with types: score_target, most_improved, walk_count, highest_score
   - [x] ChallengeViewSet with full CRUD and computed standings
-  - [ ] Section-scoped challenges (e.g., "Best Curb Appeal — March 2026")
-  - [ ] Prizes text field
+  - [x] Section-scoped challenges (e.g., "Best Curb Appeal — March 2026") — section_name field + UI dropdown
+  - [x] Prizes text field on Challenge model
   - [ ] Challenge finalization emails (Celery daily task)
 - [x] Achievements / Badges — 12 pre-built achievements
   - [x] Bronze/silver/gold/platinum tiers
@@ -536,15 +611,20 @@ See [VIDEO_AI_ANALYSIS.md](./VIDEO_AI_ANALYSIS.md) for the full technical plan, 
 - [ ] Monitoring / alerting (uptime, container health)
 - [ ] CI/CD pipeline (GitHub Actions -> auto-deploy on push)
 - [ ] Staging environment
-- [ ] Rate limiting on API (CRITICAL — see security audit)
-- [ ] JWT refresh token blacklisting after rotation (CRITICAL — see security audit)
+- [x] Rate limiting on API (anon 30/min, login 5/min, lead capture 10/min, user 120/min)
+- [x] JWT refresh token blacklisting after rotation (BLACKLIST_AFTER_ROTATION: True)
 - [ ] S3 private ACL for uploaded files (HIGH — currently public-read)
 - [ ] HSTS + security headers in Nginx (HIGH)
 - [ ] Docker containers: run as non-root user (HIGH)
 - [ ] Redis authentication (MEDIUM)
 - [ ] Audit logging (who changed what, when)
 - [ ] Server migration plan (when droplet resources get tight)
-- [ ] Offline-first with sync (PWA enhancement)
+- [x] Offline read-only resilience (service worker API caching, OfflineBanner)
+  - [x] Network-first strategy for GET /api/ requests with 1-hour TTL cache
+  - [x] Stale cache served when offline (better than nothing)
+  - [x] OfflineBanner component (amber bar: "You're offline — showing cached data")
+  - [x] Cache versioning and cleanup on service worker activation
+- [ ] Offline-first with sync (full PWA — IndexedDB, background sync, offline walk completion)
 - [ ] Public API / webhook system for third-party integrations
 
 ---
@@ -553,24 +633,64 @@ See [VIDEO_AI_ANALYSIS.md](./VIDEO_AI_ANALYSIS.md) for the full technical plan, 
 
 | Priority | Phase | Notes |
 |----------|-------|-------|
-| 1 | **Phase 5.8 remaining** | Resolution time by priority + SLA color coding, driver-to-action-item correlation, notes/observations callouts, template inline editing |
-| 2 | **Phase 8 remaining** | Streaks leaderboard, section-scoped challenges, achievement emails, role visibility, leaderboard caching |
-| 3 | **Phase 5.9: Public Site Pitch Deck** | Homepage overhaul, /enterprise page, lead funnels, before/after visuals |
-| 4 | **Security hardening** | JWT blacklisting, rate limiting, S3 private ACL, HSTS, Redis auth — see SECURITY_AUDIT.md |
-| 5 | **AI Assessment Feedback** | Track unchecked AI suggestions to refine future assessments, user feedback mechanism |
-| 6 | **Phase 7: Advanced AI** | Predictive scoring, NL queries, AI coaching. Department AI eval already done (knives demo ready for Jordan) |
-| 7 | **Phase 9: AI Video Analysis** | Gemini API setup done. Post-walk video upload + analysis |
-| 8 | **Phase 4.5: Data Integrations** | Mango SFTP import (pending cred verification), staffing data (source TBD), sales correlation dashboard |
-| 9 | **Phase 6: White-Label** | Tied to marketing expansion plan. Deferred until other verticals are pursued |
+| 1 | **Enterprise landing page** | `/enterprise` page for pitching Ace and 10-50+ location operators. Strategic for first sales. |
+| 2 | **Security hardening** | HSTS headers, S3 private ACL, Redis auth, Docker non-root — JWT blacklisting + rate limiting already done |
+| 3 | **Phase 5.8 remaining** | Resolution time by priority + SLA color coding, driver-to-action-item correlation, notes/observations callouts, template inline editing |
+| 4 | **Phase 8 remaining** | Achievement emails, role visibility, leaderboard caching, challenge finalization emails — streaks + section challenges + prizes done |
+| 5 | **Public pages expansion** | Industry vertical pages (after Ace pitch — build based on real use cases), real AI analysis screenshots |
+| 6 | **AI Assessment Feedback** | Track unchecked AI suggestions to refine future assessments, user feedback mechanism |
+| 7 | **Phase 7: Advanced AI** | Predictive scoring, NL queries, AI coaching. Department AI eval already done (knives demo ready for Jordan) |
+| 8 | **Phase 9: AI Video Analysis** | Gemini API setup done. Post-walk video upload + analysis |
+| 9 | **Phase 4.5: Data Integrations** | Mango SFTP import (pending cred verification), staffing data (source TBD), sales correlation dashboard |
+| 10 | **Phase 6: White-Label** | Tied to marketing expansion plan. Deferred until Ace partnership established + other verticals pursued |
 
 **Key dependencies:**
+- **Ace pitch**: Enterprise landing page + comparison pages ready. Need real demo data and case study from Northwest stores.
 - Mango SFTP: Need to verify credentials and available file formats before building importer
 - Staffing data: Need to identify source (manual entry? POS? scheduling software?)
 - Gemini API: **DONE** — API key configured, google-genai SDK installed, Gemini 2.5 Flash active for assessments + video
 - Department AI eval for knives: **DONE** — ready to demo with Jordan
 - Security audit: **DONE** — 4 critical, 6 high, 9 medium, 6 low findings documented
+- Rate limiting: **DONE** — configured in DRF settings
+- JWT blacklisting: **DONE** — BLACKLIST_AFTER_ROTATION enabled
 
 **Core insight for data integrations:** Not all stores sell equally. Raw sales numbers are misleading. The real metric is **quality score per staff hour** — "it takes X staff hours/day to maintain a quality score of Y, which correlates to sales efficiency of Z." This lets stores run lean while maintaining quality.
+
+---
+
+## Pricing Review (Pre-Launch)
+
+Current pricing: **$29 / $49 / $79** per store/mo (Starter / Pro / Enterprise)
+
+### Options Under Consideration
+
+| Option | Starter | Pro | Enterprise | Notes |
+|--------|---------|-----|-----------|-------|
+| **Current** | $29 | $49 | $79 | Conservative, low friction entry |
+| **$30 jumps** | $29 | $59 | $89 | Moderate bump, keeps Starter accessible |
+| **Recommended A** | $39 | $79 | $119 | Better value positioning, Pro as growth tier |
+| **Recommended B** | $49 | $89 | $129 | Premium positioning, strong feature set justifies it |
+| **Leaning toward** | $29 | $59 | $99 | $30 jump base→mid, $40 jump mid→top. Feels balanced. |
+
+### Trial & Discount Structure
+- **14-day free trial** (standard self-serve signup) — full Enterprise access
+- **30-day trial** (via demo/request-demo process)
+- **16% annual discount** (~2 months equivalent) — standard B2B SaaS
+- **Volume discounts**: 3-4 stores (5%), 5-9 stores (10%), 10+ stores (15%)
+- **Founding partner discounts**: custom % (e.g., Northwest at 50%)
+
+### Considerations
+- Platform has significant feature depth (AI photo analysis, gamification, scheduling, benchmarking, integrations, etc.) — competitors charge $100-200+/store
+- Founding partner discounts (50%) make any tier accessible for early adopters
+- Volume discounts (5-15%) further compress pricing at scale
+- Starting lower allows proving value before raising prices
+- Easier to raise prices for new customers than to lower them
+- B2B pricing signals: $29 = "basic tool", $59-99 = "professional platform"
+
+### Decision
+- **Action**: Discuss with Jordan before first customer presentations
+- **Timing**: Finalize before first non-Northwest demo
+- **Strategy**: Grandfather existing customers at current pricing when raising
 
 ---
 

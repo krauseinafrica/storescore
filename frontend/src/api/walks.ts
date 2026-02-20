@@ -473,6 +473,8 @@ export async function deleteReferenceImage(
 
 export interface OrgSettingsData {
   id: string;
+  location_enforcement: 'advisory' | 'strict';
+  verification_radius_meters: number;
   ai_photo_analysis: boolean;
   allow_benchmarking: boolean;
   benchmarking_period_days: number;
@@ -1002,6 +1004,7 @@ export async function uploadAssessmentSubmission(
         'X-Organization': orgId,
         'Content-Type': 'multipart/form-data',
       },
+      timeout: 60000,
     }
   );
   return response.data;
@@ -1029,6 +1032,19 @@ export async function createAssessmentActionItems(
   const response = await api.post(
     `/walks/assessments/${assessmentId}/create-action-items/`,
     { items },
+    { headers: { 'X-Organization': orgId } }
+  );
+  return response.data;
+}
+
+export async function dismissAssessmentSuggestions(
+  orgId: string,
+  assessmentId: string,
+  items: Array<{ description: string; priority: string; reason?: string }>
+): Promise<{ dismissed_count: number }> {
+  const response = await api.post(
+    `/walks/assessments/${assessmentId}/dismiss-suggestions/`,
+    { dismissed_items: items },
     { headers: { 'X-Organization': orgId } }
   );
   return response.data;

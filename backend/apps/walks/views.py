@@ -32,6 +32,7 @@ from .models import (
     CriterionReferenceImage,
     Department,
     DepartmentType,
+    DismissedSuggestion,
     Driver,
     EvaluationSchedule,
     IndustryTemplate,
@@ -293,12 +294,77 @@ class WalkViewSet(ModelViewSet):
 
         return queryset
 
+    def _get_org_location_settings(self):
+        """Get location enforcement settings for the current org."""
+        from apps.stores.models import OrgSettings
+        settings, _ = OrgSettings.objects.get_or_create(organization=self.request.org)
+        return settings.location_enforcement, settings.verification_radius_meters
+
+    def _check_gps_enforcement(self, store, lat, lng):
+        """
+        Check GPS enforcement for a store. Returns (allowed, error_message, distance, verified).
+        Respects store.verification_method and org enforcement mode.
+        """
+        enforcement, radius = self._get_org_location_settings()
+
+        # If store verification method doesn't involve GPS, skip GPS check
+        if store.verification_method == 'qr_only':
+            return True, None, None, False
+
+        # If store has no coordinates, we can't verify — allow with warning
+        if store.latitude is None or store.longitude is None:
+            if enforcement == 'strict':
+                logger.warning(
+                    'Strict GPS enforcement skipped for store %s — no coordinates configured',
+                    store.id,
+                )
+            return True, None, None, False
+
+        # GPS is relevant for this store — check if coordinates were provided
+        if lat is None or lng is None:
+            if enforcement == 'strict':
+                return False, f'GPS location is required to start a walk at this store. Please enable location services and try again.', None, False
+            return True, None, None, False
+
+        # Calculate distance
+        try:
+            lat_f, lng_f = float(lat), float(lng)
+        except (TypeError, ValueError):
+            if enforcement == 'strict':
+                return False, 'Invalid GPS coordinates.', None, False
+            return True, None, None, False
+
+        distance = self._haversine_distance(lat_f, lng_f, float(store.latitude), float(store.longitude))
+        verified = distance <= radius
+
+        if not verified and enforcement == 'strict':
+            return False, (
+                f'You are {int(distance)}m from {store.name}, which exceeds the '
+                f'{radius}m verification radius. You must be within {radius}m of the store to start this evaluation.'
+            ), int(distance), False
+
+        return True, None, int(distance) if distance is not None else None, verified
+
     def perform_create(self, serializer):
+        store_id = self.request.data.get('store')
+        lat = self.request.data.get('start_latitude')
+        lng = self.request.data.get('start_longitude')
+
+        # Pre-check GPS enforcement before creating the walk
+        if store_id:
+            from apps.stores.models import Store
+            try:
+                store = Store.objects.get(id=store_id, organization=self.request.org)
+                allowed, error_msg, distance, verified = self._check_gps_enforcement(store, lat, lng)
+                if not allowed:
+                    from rest_framework.exceptions import ValidationError
+                    raise ValidationError({'detail': error_msg})
+            except Store.DoesNotExist:
+                pass
+
         walk = serializer.save(organization=self.request.org)
 
         # If GPS coords provided at creation time, verify location immediately
-        lat = self.request.data.get('start_latitude')
-        lng = self.request.data.get('start_longitude')
         if lat is not None and lng is not None:
             try:
                 lat = float(lat)
@@ -307,12 +373,13 @@ class WalkViewSet(ModelViewSet):
                 walk.start_longitude = lng
 
                 store = walk.store
+                _, radius = self._get_org_location_settings()
                 if store.latitude is not None and store.longitude is not None:
                     distance = self._haversine_distance(
                         lat, lng, float(store.latitude), float(store.longitude),
                     )
                     walk.location_distance_meters = int(distance)
-                    walk.location_verified = distance <= 500
+                    walk.location_verified = distance <= radius
 
                 walk.save(update_fields=[
                     'start_latitude', 'start_longitude',
@@ -649,27 +716,34 @@ class WalkViewSet(ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        # Check GPS enforcement before starting
+        store = walk.store
+        allowed, error_msg, distance, verified = self._check_gps_enforcement(store, lat, lng)
+        if not allowed:
+            return Response(
+                {'detail': error_msg},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
         from django.utils import timezone
         walk.status = Walk.Status.IN_PROGRESS
         walk.started_at = timezone.now()
         walk.start_latitude = lat
         walk.start_longitude = lng
 
-        # Calculate distance from store using Haversine formula
-        store = walk.store
-        distance_meters = None
-        location_verified = False
-        VERIFICATION_RADIUS_METERS = 500  # 500m radius
-
-        if store.latitude is not None and store.longitude is not None:
+        # Use pre-computed distance and verification from enforcement check
+        _, radius = self._get_org_location_settings()
+        if distance is not None:
+            walk.location_distance_meters = distance
+            walk.location_verified = verified
+        elif store.latitude is not None and store.longitude is not None:
             distance_meters = self._haversine_distance(
                 lat, lng,
                 float(store.latitude), float(store.longitude),
             )
-            location_verified = distance_meters <= VERIFICATION_RADIUS_METERS
+            walk.location_distance_meters = int(distance_meters)
+            walk.location_verified = distance_meters <= radius
 
-        walk.location_distance_meters = int(distance_meters) if distance_meters is not None else None
-        walk.location_verified = location_verified
         walk.save(update_fields=[
             'status', 'started_at',
             'start_latitude', 'start_longitude',
@@ -1911,7 +1985,71 @@ class SelfAssessmentViewSet(ModelViewSet):
         if assigned_to:
             send_action_items_notification(assessment, created, assigned_to)
 
+        # Mark suggestions as reviewed if all are now accepted/dismissed
+        self._maybe_mark_suggestions_reviewed(assessment)
+
         return Response({'created': created, 'count': len(created)}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], url_path='dismiss-suggestions')
+    def dismiss_suggestions(self, request, pk=None):
+        """Dismiss AI-suggested action items (tracked for analytics).
+        Expects: { "dismissed_items": [{ "description": "...", "priority": "high", "reason": "not_relevant" }] }
+        """
+        from .models import DismissedSuggestion
+
+        assessment = self.get_object()
+        items_data = request.data.get('dismissed_items', [])
+        if not items_data:
+            return Response(
+                {'detail': 'No items provided.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        created = []
+        for item in items_data:
+            obj = DismissedSuggestion.objects.create(
+                organization=request.org,
+                assessment=assessment,
+                store=assessment.store,
+                description=item.get('description', ''),
+                priority=item.get('priority', '').lower(),
+                reason=item.get('reason', ''),
+                dismissed_by=request.user,
+            )
+            created.append(str(obj.id))
+
+        # Mark suggestions as reviewed if all are now accepted/dismissed
+        self._maybe_mark_suggestions_reviewed(assessment)
+
+        return Response({'dismissed_count': len(created)}, status=status.HTTP_200_OK)
+
+    def _maybe_mark_suggestions_reviewed(self, assessment):
+        """Set suggestions_reviewed=True if all AI suggestions have been accepted or dismissed."""
+        import json
+
+        if assessment.suggestions_reviewed:
+            return
+
+        # Count total AI suggestions across submissions
+        total_suggestions = 0
+        for sub in assessment.submissions.all():
+            if not sub.ai_analysis:
+                continue
+            try:
+                parsed = json.loads(sub.ai_analysis)
+                total_suggestions += len(parsed.get('action_items', []))
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+        if total_suggestions == 0:
+            return
+
+        accepted_count = assessment.action_items.count()
+        dismissed_count = assessment.dismissed_suggestions.count()
+
+        if accepted_count + dismissed_count >= total_suggestions:
+            assessment.suggestions_reviewed = True
+            assessment.save(update_fields=['suggestions_reviewed'])
 
     @action(detail=True, methods=['post'], url_path='review')
     def review_assessment(self, request, pk=None):
@@ -2183,6 +2321,11 @@ class AssessmentSubmissionView(APIView):
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def post(self, request, assessment_id):
+        logger.info(
+            'Submission upload: assessment=%s content_type=%s FILES=%s DATA_keys=%s',
+            assessment_id, request.content_type,
+            list(request.FILES.keys()), list(request.data.keys()),
+        )
         try:
             assessment = SelfAssessment.objects.get(
                 id=assessment_id, organization=request.org,
@@ -2198,6 +2341,10 @@ class AssessmentSubmissionView(APIView):
 
         upload_file = request.FILES.get('image')
         if not upload_file:
+            logger.warning(
+                'No file in upload: content_type=%s FILES=%s',
+                request.content_type, list(request.FILES.keys()),
+            )
             return Response({'detail': 'No file provided.'}, status=400)
 
         prompt_id = request.data.get('prompt')

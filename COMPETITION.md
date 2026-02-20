@@ -510,6 +510,60 @@ Xenia is the closest competitor in feature set and philosophy (modern, AI-powere
 
 ---
 
+### 11a. Bindy (formerly Compliantia)
+
+**Overview:** Cloud-powered audit, task management, and communication platform for retail and hospitality. Specifically built for the retail audit use case with strong content marketing presence (their blog ranks well for "retail audit software" keywords). Actively publishes competitive comparison content (e.g., "Bindy vs Zenput"). Smaller company but highly rated (4.9/5 on Capterra, Software Advice, and GetApp).
+
+**Key Features:**
+- Custom audit checklists with conditional logic
+- Real-time reports with signatures, videos, and photo verifications
+- Photo capture and annotation
+- Automatic corrective action plan generation from non-compliant items
+- Root cause analysis and data visualization
+- Task management and collaboration
+- Built-in project management (store openings, closings, improvement plans)
+- Unlimited users and sites on all plans
+- Automated notifications and escalation workflows
+- District/area manager dashboards
+
+**Pricing:**
+- Starts at ~$99/month
+- Priced by usage (number of audits), NOT by users or sites
+- Claims to cost up to 75% less than competitors
+- No hidden fees, no setup/onboarding/maintenance fees
+- Free trial (no credit card required)
+- Unlimited users and sites included in all plans
+
+**Strengths:**
+- Highly rated across all review platforms (4.9/5 consistently)
+- Retail-focused — not adapted from restaurant or construction
+- Unlimited users and sites removes friction for scaling
+- Strong content marketing and SEO presence (publishes competitor comparisons)
+- Per-audit pricing model is unique and can be cost-effective for lower-frequency inspections
+- Built-in project management for store openings/closings is differentiated
+- Good corrective action workflow with root cause analysis
+- Actively maintained blog with retail operations thought leadership
+
+**Weaknesses:**
+- **No AI photo analysis** — photo capture is manual only, no automated recognition or scoring
+- **No AI walk summaries** — no intelligent narrative generation from inspection data
+- **No gamification or leaderboards** — no competitive scoring between locations
+- **No department-level evaluation system** with independent scoring
+- **No franchise-specific features** — no self-assessments, no franchise hierarchy
+- Dated UI compared to newer entrants (functional but not modern)
+- Smaller company with limited enterprise scalability
+- No offline mode mentioned prominently
+- Per-audit pricing could get expensive at high inspection frequency
+- No QR code or GPS verification features
+- No scoring drivers or root cause tagging on individual scores
+
+**Gap StoreScore Can Exploit:**
+Bindy is the most retail-focused incumbent competitor and the one most likely to appear in head-to-head comparisons. However, they completely lack AI capabilities (no photo analysis, no walk summaries, no auto-action items), gamification, and franchise-specific features. StoreScore can position directly against Bindy as the "next-generation" retail inspection platform with AI intelligence that Bindy cannot match. Their per-audit pricing model could also work against them for customers who want unlimited walks.
+
+**Competitive Content Note:** Bindy actively publishes comparison pages (e.g., "Bindy vs Zenput"). StoreScore should create a "StoreScore vs Bindy" page to control the narrative and capture high-intent search traffic before Bindy publishes their version targeting StoreScore.
+
+---
+
 ## Adjacent Competitors (Audit / Compliance)
 
 ### 12. GoAudits
@@ -908,6 +962,181 @@ Tag why scores are low with diagnostic categories (staffing issues, supply chain
 - [ ] **Embeddable widgets for franchise corporate dashboards** -- Let franchise corporate offices embed StoreScore data in their existing dashboards and reporting tools.
 - [ ] **Training module linked to low-scoring areas** (from SafetyCulture SC Training concept) -- Surface relevant training content when specific walk areas score poorly.
 - [ ] **Automated scheduling based on risk scores** -- Higher-risk stores (lower walk scores, more overdue actions) automatically receive more frequent walk scheduling.
+
+---
+
+## Data Integrations Competitive Analysis
+
+### Overview
+
+Data integrations represent a massive competitive opportunity for StoreScore. **Almost no competitor correlates external business data (sales, labor, inventory) with audit/inspection scores.** Only Crunchtime/Zenput does this comprehensively, and they are 100% restaurant-focused with enterprise-only pricing.
+
+### Competitor Data Integration Capabilities
+
+#### SafetyCulture (iAuditor) — Most Mature Ecosystem (Outbound Only)
+
+**Integration Methods:** Public REST API, Zapier, Microsoft Power Automate, Workato Integration Builder, Airbyte/Fivetran connectors, SafetyCulture Exporter
+
+**Specific Integrations:**
+- **Workforce:** Deputy, Tanda, Employment Hero
+- **ERP:** SAP SuccessFactors
+- **Field Service:** Simpro (bi-directional job data sync)
+- **BI/Analytics:** Power BI Desktop (native connector), Tableau, Snowflake (via Portable)
+- **Cloud Storage:** SharePoint, Google Drive, Dropbox
+- **Communication:** Microsoft Teams, Slack
+
+**Critical Gap:** All integrations push inspection data OUT. They never bring external business data IN. No POS, no sales correlation, no labor analytics, no inventory data. **Rating: 9/10 for export; 1/10 for import.**
+
+---
+
+#### Crunchtime/Zenput — Deepest Cross-Functional Correlation (Restaurant Only)
+
+**Integration Methods:** Crunchtime Developer Hub REST APIs, flat file (CSV) import, bi-directional POS data flow
+
+**POS Integrations:** Oracle MICROS (Simphony, 3700), Toast, NCR Aloha, PAR, POSitouch, Revel, GiveX, PDQ, Qu, Squirrel
+
+**Unique Capability — Unified Metric Templates:**
+- Pulls POS + Inventory + Labor/Scheduling + Zenput task completion into ONE dashboard
+- Sales forecasting API, data streaming to customer data warehouses
+- POS guest check and time punch data powering: sales reporting, COGS, labor insights (near real-time)
+- **The ONLY competitor that actually correlates operational task data with POS sales, inventory, and labor in a single view**
+
+**Critical Limitation:** 100% restaurant-focused POS integrations (Toast, Aloha, MICROS). No retail POS (no Epicor Eagle, Lightspeed, Shopify, Square retail). Enterprise pricing only.
+
+**Rating: 10/10 for restaurant data correlation; 0/10 for retail applicability.**
+
+---
+
+#### GoSpotCheck by FORM — Enterprise Data Platform
+
+**Integrations:** Salesforce (bi-directional, managed AppExchange package), Looker, Tableau, Power BI, Snowflake, AWS, GCP, Workday, Microsoft Teams
+
+**Assessment:** Strong enterprise data platform connectivity for CPG workflows. No POS, no sales/quality correlation, no labor data. Integrations serve CPG merchandising, not retail store operations.
+
+**Rating: 7/10 for enterprise data platform; 2/10 for retail store operations.**
+
+---
+
+#### FranConnect — Franchise Financial Data
+
+**Integrations:** FranConnect REST API, QuickBooks Online (consolidated P&L from franchisees), Salesforce, HubSpot, LinkedIn, Mailchimp, Pipedrive, Mindbody, Google Calendar
+
+**Unique Capability:** Royalty Manager integrates with franchisee POS and accounting software to automate royalty collection based on actual sales data. Pulls consolidated sales and P&L data via QuickBooks.
+
+**Critical Limitation:** Financial data is used for royalty calculation, NOT for quality-to-sales correlation analysis.
+
+**Rating: 6/10 for franchise financial data; 2/10 for quality-to-operations correlation.**
+
+---
+
+#### Xenia — Broadest HRIS Coverage
+
+**Integrations:** 70+ total. **25+ HRIS/Payroll:** Workday, ADP, UKG, 7shifts, Paycom, Paylocity, BambooHR, Kronos, Paycor, Gusto, Justworks, Paychex, Deel, TriNet, and more. **BI:** Power BI, Qlik, Tableau. **Ticketing:** ServiceNow, Asana, Monday.com, Jira, Zendesk. **SSO:** Okta, Google Workspace, Microsoft Entra ID.
+
+**Critical Gap:** HRIS integrations are for employee/user sync ONLY, not for labor analytics. They never USE staffing data to explain quality scores despite having the data pipes.
+
+**Rating: 8/10 for HRIS breadth; 1/10 for cross-functional correlation.**
+
+---
+
+#### Other Competitors
+
+| Competitor | Integration Rating | Notes |
+|---|---|---|
+| **Jolt** | 4/10 | Some POS (Square, Toast), HR (ADP, Gusto, Paychex), but shallow ecosystem |
+| **Lumiform** | 5/10 | API, SAP, Dynamics, Power BI, Tableau, PostgreSQL, MySQL, cloud storage |
+| **OpsAnalitica** | 5/10 concept, unclear execution | Claims POS/inventory integration and revenue correlation, minimal detail |
+| **GoAudits** | 3/10 | API exists (Enterprise only), webhooks, generic BI/cloud/workforce mentions |
+| **Bindy** | 2/10 | Data warehouse export API, SSO, no named third-party integrations |
+| **monitorQA** | 2/10 | API for data extraction, minimal integrations |
+
+---
+
+### Data Integration Competitive Matrix
+
+| Capability | StoreScore | SafetyCulture | Crunchtime | GoSpotCheck | FranConnect | Xenia | Jolt |
+|---|---|---|---|---|---|---|---|
+| **Public REST API** | Planned | YES | YES | YES | YES | YES | YES |
+| **Zapier** | No | YES | No | No | No | No | No |
+| **Webhooks** | Planned | Via Zapier | No | No | No | No | No |
+| **POS Integration** | Planned (Eagle) | No | YES (restaurant) | No | Generic | No | YES (Square, Toast) |
+| **HR/Scheduling** | Planned (Deputy) | YES (Deputy) | YES | YES (Workday) | No | YES (25+) | YES (ADP, Gusto) |
+| **BI Tools** | No | YES (Power BI) | YES | YES (Looker, Tableau) | No | YES | No |
+| **CSV Import** | **YES** | No | No | No | No | No | No |
+| **Manual Data Entry** | **YES** | No | No | No | No | No | No |
+| **Sales-Quality Correlation** | **Planned** | **NO** | **YES (restaurants)** | NO | NO | NO | NO |
+| **Labor-Quality Correlation** | **Planned** | **NO** | **YES (restaurants)** | NO | NO | NO | NO |
+
+---
+
+### The Correlation Gap — StoreScore's Biggest Opportunity
+
+**No competitor in the retail audit space correlates external business data with inspection scores.** Crunchtime proves the concept works brilliantly for restaurants (Unified Metric Templates), but no one has built this for retail.
+
+StoreScore's planned features — "quality score per staff hour," "walk score to sales correlation," and the data integrations infrastructure — would be **genuinely unique** in the retail inspection market.
+
+**The pitch:** "SafetyCulture can tell you what your audit score is. StoreScore can tell you what that score is worth in dollars."
+
+---
+
+### Integration Priority Roadmap
+
+#### Tier 1: Build Now (Pre-Launch Differentiators)
+1. **Epicor Eagle CSV/Report Parser** — 3,400+ Ace stores use Eagle. THE hardware retail POS. Build smart parser that recognizes Compass export format. Pull: weekly/monthly sales by department, transaction count, average ticket, inventory turns, out-of-stock percentages.
+2. **Sales-to-Quality Correlation Dashboard** — The killer feature. Walk scores alongside sales data on time-series charts. Correlation coefficients. "Stores scoring above X on walks average Y% higher sales."
+3. **Deputy API Integration** — Already planned. Deputy has the most open API in scheduling. Pull: scheduled hours, actual hours, labor cost, shift coverage.
+
+#### Tier 2: First 6 Months
+4. **Mango Report SFTP Import** — Already planned, pending credential verification. Automate Sunday night pull via Celery Beat.
+5. **Square POS API** — Covers SMB retail, convenience, specialty. Easiest POS API to integrate. Pull: daily sales, items sold, employee timeclock.
+6. **Webhook Receiver System** — Already modeled (webhook type exists). Build actual endpoint. Force multiplier — any system with webhooks becomes a partner.
+7. **Public API for StoreScore Data** — Read-only API keys. Lets customers pull walk scores and analytics into Power BI/Tableau.
+
+#### Tier 3: Within 12 Months
+8. **Zapier Integration** — SafetyCulture proves this is a massive adoption driver. Priority triggers: walk completed, action item created, score below threshold. Instantly connects to 6,000+ apps.
+9. **Power BI / Tableau Connector** — Native connector like SafetyCulture has. Critical for franchise corporate offices.
+10. **ADP / Paychex Payroll Integration** — Labor cost data, hours worked, headcount by store. Enables "cost of quality" metric.
+11. **Lightspeed / Shopify POS** — Covers specialty retail and growth-stage multi-location. Both have strong APIs.
+
+#### Tier 4: Future / As Market Demands
+12. Verifone/Gilbarco for C-Stores (complex, may require partnership)
+13. Toast/NCR Aloha for QSR expansion
+14. QuickBooks/Xero for financial data (FranConnect's model)
+15. Inventory management systems (specific to retail vertical)
+
+---
+
+### Data Integration Competitive Moat
+
+1. **Data Network Effects** — More stores feeding sales + quality data = better correlation benchmarks. "Based on 500 hardware stores, maintaining a walk score above 85% correlates with 18% higher sales per labor hour." No competitor can produce this insight.
+2. **Switching Cost** — Once POS and scheduling data flows through StoreScore, correlation insights become irreplaceable. Switching to SafetyCulture means losing the "why" behind the numbers.
+3. **Sales Enablement** — "StoreScore can prove your inspection program generates ROI" is the most powerful pitch in this market. Every competitor asks customers to take quality improvement on faith.
+4. **Pricing Power** — A platform that proves ROI can charge more than a checklist tool.
+
+---
+
+### POS Systems by Retail Vertical
+
+**Hardware Retail (Ace, True Value, Do It Best):**
+- Epicor Eagle — #1 priority. 3,400+ of 5,300+ Ace stores. Exclusively endorsed by Do It Best.
+
+**Convenience Stores:**
+- Verifone Commander — Dominant in US c-stores (150,000+)
+- Gilbarco Passport — Second major c-store POS
+- PDI Software — Significant in c-store/petroleum wholesale
+
+**General Multi-Location Retail:**
+- Square for Retail — Dominant SMB, strong API, affordable
+- Lightspeed Retail — Best-in-class inventory management
+- Shopify POS — Strong omnichannel, widely used DTC/specialty
+- Clover — Popular SMB, Fiserv-backed
+
+**HR/Scheduling Platforms to Prioritize:**
+- Deputy — Priority #1, already planned, open API, retail-focused
+- ADP Workforce Now — Most popular in retail and IT
+- Paychex — Major HR/payroll, strong multi-location
+- 7shifts — Growing fast in retail/restaurant scheduling
+- Homebase — Popular with small multi-location, free tier
 
 ---
 

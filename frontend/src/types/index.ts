@@ -500,6 +500,10 @@ export interface SelfAssessment {
   reviewer_notes: string;
   submission_count?: number;
   action_items_count?: number;
+  dismissed_count?: number;
+  suggestions_reviewed?: boolean;
+  accepted_descriptions?: string[];
+  dismissed_descriptions?: string[];
   submissions?: AssessmentSubmission[];
   prompts?: AssessmentPrompt[];
   created_at: string;

@@ -144,6 +144,22 @@ class OrgSettings(TimestampedModel):
         help_text='Cached subscription tier slug: free, starter, pro, enterprise.',
     )
 
+    # Location enforcement
+    class LocationEnforcement(models.TextChoices):
+        ADVISORY = 'advisory', 'Advisory (warn only)'
+        STRICT = 'strict', 'Strict (block if too far)'
+
+    location_enforcement = models.CharField(
+        max_length=10,
+        choices=LocationEnforcement.choices,
+        default=LocationEnforcement.ADVISORY,
+        help_text='Whether GPS verification is advisory (warn) or strict (block walk creation).',
+    )
+    verification_radius_meters = models.PositiveIntegerField(
+        default=500,
+        help_text='Maximum allowed distance in meters from store for GPS verification (50-5000).',
+    )
+
     # Premium features
     ai_photo_analysis = models.BooleanField(
         default=False,

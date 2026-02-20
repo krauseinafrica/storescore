@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../hooks/useAuth';
-import { getStores, getTemplates, createWalk, deleteWalk, verifyWalkQR } from '../../api/walks';
+import { getStores, getTemplates, createWalk, deleteWalk, verifyWalkQR, getOrgSettings } from '../../api/walks';
 import type { Store, ScoringTemplate, Walk } from '../../types';
 import { getOrgId } from '../../utils/org';
 import LocationWarningModal from '../../components/LocationWarningModal';
+import QRScanner from '../../components/QRScanner';
 
 function captureGPS(): Promise<{ latitude: number; longitude: number } | null> {
   return new Promise((resolve) => {
@@ -41,6 +42,8 @@ export default function NewWalk() {
   const [showLocationWarning, setShowLocationWarning] = useState(false);
   const [createdWalk, setCreatedWalk] = useState<Walk | null>(null);
   const [locationDistance, setLocationDistance] = useState(0);
+  const [locationStrict, setLocationStrict] = useState(false);
+  const [locationRadius, setLocationRadius] = useState(500);
 
   // Form state
   const [selectedStore, setSelectedStore] = useState('');
@@ -52,6 +55,8 @@ export default function NewWalk() {
   const [qrVerified, setQrVerified] = useState(false);
   const [qrVerifying, setQrVerifying] = useState(false);
   const [qrError, setQrError] = useState('');
+  const [qrScannerOpen, setQrScannerOpen] = useState(false);
+  const [showManualQr, setShowManualQr] = useState(false);
 
   const orgId = getOrgId();
 
@@ -66,14 +71,23 @@ export default function NewWalk() {
 
     async function fetchData() {
       try {
-        const [storeData, templateData] = await Promise.all([
+        const [storeData, templateData, orgSettings] = await Promise.all([
           getStores(orgId),
           getTemplates(orgId),
+          getOrgSettings(orgId).catch(() => null),
         ]);
 
         if (!cancelled) {
           setStores(storeData.filter((s) => s.is_active));
           setTemplates(templateData.filter((t: ScoringTemplate) => t.is_active));
+
+          // Apply org location enforcement settings
+          if (orgSettings) {
+            setLocationStrict(orgSettings.location_enforcement === 'strict');
+            if (orgSettings.verification_radius_meters) {
+              setLocationRadius(orgSettings.verification_radius_meters);
+            }
+          }
 
           // Auto-select template if there's only one
           const activeTemplates = templateData.filter(
@@ -152,7 +166,7 @@ export default function NewWalk() {
       }
 
       // Step 3: Check location verification
-      if (!walk.location_verified && walk.location_distance_meters !== null && walk.location_distance_meters > 500) {
+      if (!walk.location_verified && walk.location_distance_meters !== null && walk.location_distance_meters > locationRadius) {
         setCreatedWalk(walk);
         setLocationDistance(walk.location_distance_meters);
         setShowLocationWarning(true);
@@ -203,6 +217,8 @@ export default function NewWalk() {
         distanceMeters={locationDistance}
         onContinue={handleWarningContinue}
         onCancel={handleWarningCancel}
+        strict={locationStrict}
+        radiusMeters={locationRadius}
       />
 
       {/* Back button + Header */}
@@ -305,52 +321,85 @@ export default function NewWalk() {
               </div>
             ) : (
               <>
-                <p className="text-xs text-gray-500">
-                  Enter the verification token from the store's QR code. You can find this by scanning the QR code posted at the store, or manually entering the token from the URL.
-                </p>
                 {qrError && (
                   <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{qrError}</div>
                 )}
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={qrToken}
-                    onChange={(e) => setQrToken(e.target.value.trim())}
-                    placeholder="Paste QR token (UUID)..."
-                    className="flex-1 rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500"
-                  />
+
+                {/* Primary: Scan QR Code button */}
+                <button
+                  type="button"
+                  onClick={() => setQrScannerOpen(true)}
+                  className="w-full flex items-center justify-center gap-2 rounded-lg bg-primary-600 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:bg-primary-700 transition-colors"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" /></svg>
+                  Scan QR Code
+                </button>
+
+                {/* Secondary: Manual entry */}
+                {!showManualQr ? (
                   <button
                     type="button"
-                    onClick={async () => {
-                      if (!qrToken || qrVerifying) return;
-                      setQrVerifying(true);
-                      setQrError('');
-                      // We'll verify after walk creation. For now, just validate format and store the token.
-                      // UUID format validation
-                      const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-                      if (!uuidRegex.test(qrToken)) {
-                        setQrError('Invalid token format. Please enter a valid UUID.');
-                        setQrVerifying(false);
-                        return;
-                      }
-                      // Check if token matches the store's token (client-side pre-validation)
-                      if (selectedStoreObj && selectedStoreObj.qr_verification_token === qrToken) {
-                        setQrVerified(true);
-                      } else {
-                        setQrError('Token does not match this store. Please check and try again.');
-                      }
-                      setQrVerifying(false);
-                    }}
-                    disabled={!qrToken || qrVerifying}
-                    className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    onClick={() => setShowManualQr(true)}
+                    className="w-full text-center text-xs text-gray-500 hover:text-gray-700 transition-colors"
                   >
-                    {qrVerifying ? 'Verifying...' : 'Verify'}
+                    Enter code manually instead
                   </button>
-                </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={qrToken}
+                      onChange={(e) => setQrToken(e.target.value.trim())}
+                      placeholder="Paste QR token (UUID)..."
+                      className="flex-1 rounded-lg border-gray-300 text-sm shadow-sm focus:border-primary-500 focus:ring-primary-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!qrToken || qrVerifying) return;
+                        setQrVerifying(true);
+                        setQrError('');
+                        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+                        if (!uuidRegex.test(qrToken)) {
+                          setQrError('Invalid token format. Please enter a valid UUID.');
+                          setQrVerifying(false);
+                          return;
+                        }
+                        if (selectedStoreObj && selectedStoreObj.qr_verification_token === qrToken) {
+                          setQrVerified(true);
+                        } else {
+                          setQrError('Token does not match this store. Please check and try again.');
+                        }
+                        setQrVerifying(false);
+                      }}
+                      disabled={!qrToken || qrVerifying}
+                      className="px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                    >
+                      {qrVerifying ? 'Verifying...' : 'Verify'}
+                    </button>
+                  </div>
+                )}
               </>
             )}
           </div>
         )}
+
+        {/* QR Scanner Modal */}
+        <QRScanner
+          isOpen={qrScannerOpen}
+          onScan={(token) => {
+            setQrScannerOpen(false);
+            setQrToken(token);
+            setQrError('');
+            // Verify the scanned token
+            if (selectedStoreObj && selectedStoreObj.qr_verification_token === token) {
+              setQrVerified(true);
+            } else {
+              setQrError('Scanned QR code does not match this store. Please check you are scanning the correct store QR code.');
+            }
+          }}
+          onClose={() => setQrScannerOpen(false)}
+        />
 
         {/* Step 2: Select Template */}
         <div>

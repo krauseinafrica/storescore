@@ -17,7 +17,9 @@ const SECTIONS = [
   { id: 'conduct', label: 'Conduct a Walk' },
   { id: 'ai-summary', label: 'AI Summary' },
   { id: 'photos', label: 'Photos' },
+  { id: 'photo-assessment', label: 'Photo Assessments' },
   { id: 'action-items', label: 'Action Items' },
+  { id: 'gamification', label: 'Gamification' },
   { id: 'reports', label: 'Reports' },
   { id: 'team', label: 'Team & Scheduling' },
 ] as const;
@@ -1015,6 +1017,132 @@ function TeamMockup() {
   );
 }
 
+/* ─── Section 5b: Photo Assessment (AI) — Real Screenshots ──── */
+
+function PhotoAssessmentMockup() {
+  return (
+    <div className="space-y-6">
+      {/* Side-by-side: store photo + AI analysis */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 items-start">
+        {/* Store photo */}
+        <div className="space-y-2">
+          <div className="rounded-xl sm:rounded-2xl shadow-lg ring-1 ring-gray-900/10 overflow-hidden">
+            <img
+              src="https://images-media.nyc3.cdn.digitaloceanspaces.com/storescore-files/AI%20Photo.png"
+              alt="Garden and pest control aisle captured during a quick assessment"
+              loading="lazy"
+              className="w-full"
+            />
+          </div>
+          <p className="text-xs text-gray-400 text-center">Photo captured by evaluator during a quick assessment</p>
+        </div>
+
+        {/* AI analysis screenshot */}
+        <div className="space-y-2">
+          <div className="rounded-xl sm:rounded-2xl shadow-lg ring-1 ring-gray-900/10 overflow-hidden">
+            <img
+              src="https://images-media.nyc3.cdn.digitaloceanspaces.com/storescore-files/AI%20Analysis.png"
+              alt="AI analysis showing key findings, fair rating, and suggested action items with priority levels"
+              loading="lazy"
+              className="w-full"
+            />
+          </div>
+          <p className="text-xs text-gray-400 text-center">AI instantly analyzes the photo and generates action items</p>
+        </div>
+      </div>
+
+      {/* Callout: what the AI found */}
+      <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200/60 rounded-xl p-5">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+            </svg>
+          </div>
+          <div>
+            <h4 className="text-sm font-semibold text-gray-900 mb-1">Real AI analysis from an actual store visit</h4>
+            <p className="text-sm text-gray-600 leading-relaxed">
+              From a single photo, StoreScore's AI identified 7 key findings — from inconsistent product facing and
+              haphazard stacking on lower shelves to shelf visibility issues. It then auto-generated 5 prioritized
+              action items that the store manager can accept with one tap.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Section 8b: Gamification ───────────────────────────────── */
+
+function GamificationMockup() {
+  return (
+    <BrowserChrome url="app.storescore.app/leaderboard">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h3 className="text-sm font-bold text-gray-900">Leaderboard</h3>
+          <p className="text-[11px] text-gray-400">February 2026 &middot; All Regions</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <select className="text-[11px] bg-white border border-gray-200 rounded-lg px-2 py-1 text-gray-600">
+            <option>This Month</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Top 3 podium */}
+      <div className="flex items-end justify-center gap-3 mb-4 px-4">
+        {[
+          { rank: 2, store: '#07 Cedar Ln', score: '91.8%', h: 'h-16', bg: 'bg-gray-200', medal: '🥈' },
+          { rank: 1, store: '#12 Elm St', score: '94.2%', h: 'h-20', bg: 'bg-amber-100', medal: '🥇' },
+          { rank: 3, store: '#21 Birch Dr', score: '89.5%', h: 'h-12', bg: 'bg-orange-100', medal: '🥉' },
+        ].map((p) => (
+          <div key={p.rank} className="flex-1 text-center">
+            <div className="text-lg mb-1">{p.medal}</div>
+            <div className="text-[10px] font-bold text-gray-900">{p.score}</div>
+            <div className="text-[9px] text-gray-500 mb-1">{p.store}</div>
+            <div className={`${p.h} ${p.bg} rounded-t-lg`} />
+          </div>
+        ))}
+      </div>
+
+      {/* Remaining rankings */}
+      <div className="bg-white rounded-lg ring-1 ring-gray-900/5 mb-4">
+        {[
+          { rank: 4, store: 'Store #15 — Maple Ct', score: '87.1%', trend: '-0.5', color: 'text-red-500' },
+          { rank: 5, store: 'Store #03 — Main St', score: '84.3%', trend: '+0.8', color: 'text-green-500' },
+          { rank: 6, store: 'Store #09 — Ash Blvd', score: '82.7%', trend: '+2.1', color: 'text-green-500' },
+        ].map((s) => (
+          <div key={s.rank} className="flex items-center gap-3 px-3 py-2 border-b border-gray-50 last:border-0">
+            <span className="text-[10px] font-bold text-gray-300 w-4">{s.rank}</span>
+            <span className="text-[10px] text-gray-700 flex-1">{s.store}</span>
+            <span className="text-[10px] font-bold text-gray-900">{s.score}</span>
+            <span className={`text-[9px] font-medium ${s.color}`}>{s.trend}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* Badges section */}
+      <div className="bg-white rounded-lg ring-1 ring-gray-900/5 p-3">
+        <div className="text-[10px] font-semibold text-gray-700 mb-2">Recent Badges Earned</div>
+        <div className="flex gap-3">
+          {[
+            { icon: '⭐', name: 'Perfect Score', store: '#12 Elm St', color: 'bg-amber-50 ring-amber-200' },
+            { icon: '🔥', name: '5-Walk Streak', store: '#07 Cedar Ln', color: 'bg-orange-50 ring-orange-200' },
+            { icon: '📈', name: 'Most Improved', store: '#03 Main St', color: 'bg-green-50 ring-green-200' },
+          ].map((badge) => (
+            <div key={badge.name} className={`flex-1 text-center px-2 py-2 rounded-lg ring-1 ${badge.color}`}>
+              <div className="text-lg">{badge.icon}</div>
+              <div className="text-[9px] font-semibold text-gray-900 mt-0.5">{badge.name}</div>
+              <div className="text-[8px] text-gray-400">{badge.store}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </BrowserChrome>
+  );
+}
+
 /* ─── Inline CTA ──────────────────────────────────────────────── */
 
 function InlineCTA({ text, buttonLabel, buttonHref }: { text: string; buttonLabel: string; buttonHref: string }) {
@@ -1178,6 +1306,16 @@ export default function Tour() {
             <PhotosMockup />
           </TourSection>
 
+          {/* 5b. Photo Assessments (AI) */}
+          <TourSection
+            id="photo-assessment"
+            number="06"
+            title="AI Photo Assessments"
+            description="Snap photos of any department or area, and AI instantly analyzes store conditions — identifying issues, scoring quality, and auto-generating action items. No template setup required."
+          >
+            <PhotoAssessmentMockup />
+          </TourSection>
+
           {/* Inline CTA 2 — after photos */}
           <InlineCTA
             text="Ready to ditch the spreadsheets?"
@@ -1185,20 +1323,30 @@ export default function Tour() {
             buttonHref={utm('/signup?source=product-tour', 'inline-after-photos')}
           />
 
-          {/* 6. Action Items */}
+          {/* 7. Action Items */}
           <TourSection
             id="action-items"
-            number="06"
+            number="07"
             title="Action Items & Follow-ups"
             description="Low scores automatically generate tracked action items with priority levels, due dates, and assigned owners. Nothing falls through the cracks."
           >
             <ActionItemsMockup />
           </TourSection>
 
-          {/* 7. Reports */}
+          {/* 8. Gamification */}
+          <TourSection
+            id="gamification"
+            number="08"
+            title="Gamification & Leaderboards"
+            description="Drive engagement with store leaderboards, achievement badges, and time-bound challenges. Teams compete to improve scores, earn streaks, and climb the rankings."
+          >
+            <GamificationMockup />
+          </TourSection>
+
+          {/* 9. Reports */}
           <TourSection
             id="reports"
-            number="07"
+            number="09"
             title="Reports & Analytics"
             description="Drill into performance by region, store, section, or time period. Trend lines, rankings, and section breakdowns make it easy to spot what's working and what needs attention."
           >
@@ -1212,10 +1360,10 @@ export default function Tour() {
             buttonHref={utm('/signup?source=product-tour', 'inline-after-reports')}
           />
 
-          {/* 8. Team & Scheduling */}
+          {/* 10. Team & Scheduling */}
           <TourSection
             id="team"
-            number="08"
+            number="10"
             title="Team & Scheduling"
             description="Manage your team with role-based access, invite new members, and set up recurring evaluation schedules that auto-create walks on cadence."
           >

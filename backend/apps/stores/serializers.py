@@ -112,7 +112,9 @@ class OrgSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = OrgSettings
         fields = [
-            'id', 'subscription_tier', 'ai_photo_analysis',
+            'id', 'subscription_tier',
+            'location_enforcement', 'verification_radius_meters',
+            'ai_photo_analysis',
             'allow_benchmarking', 'benchmarking_period_days',
             'gamification_enabled', 'gamification_visible_roles',
             'action_item_deadline_critical', 'action_item_deadline_high',
@@ -120,6 +122,11 @@ class OrgSettingsSerializer(serializers.ModelSerializer):
             'created_at', 'updated_at',
         ]
         read_only_fields = ['id', 'subscription_tier', 'created_at', 'updated_at']
+
+    def validate_verification_radius_meters(self, value):
+        if value < 50 or value > 5000:
+            raise serializers.ValidationError('Verification radius must be between 50 and 5000 meters.')
+        return value
 
 
 class GoalSerializer(serializers.ModelSerializer):

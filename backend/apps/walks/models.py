@@ -976,6 +976,11 @@ class SelfAssessment(OrgScopedModel):
             return f'{self.template.name} - {self.store.name} ({self.status})'
         return f'Quick ({self.area or "general"}) - {self.store.name} ({self.status})'
 
+    suggestions_reviewed = models.BooleanField(
+        default=False,
+        help_text='True once the user has accepted/dismissed all AI suggestions.',
+    )
+
     @property
     def is_quick(self):
         return self.assessment_type == self.Type.QUICK
@@ -1033,6 +1038,40 @@ class AssessmentSubmission(OrgScopedModel):
     def __str__(self):
         label = self.prompt.name if self.prompt else 'Quick photo'
         return f'{label} submission for {self.assessment}'
+
+
+class DismissedSuggestion(OrgScopedModel):
+    """Tracks AI suggestions that were dismissed by the user (for analytics)."""
+
+    class Reason(models.TextChoices):
+        NOT_RELEVANT = 'not_relevant', 'Not Relevant'
+        ALREADY_HANDLED = 'already_handled', 'Already Handled'
+        LOW_PRIORITY = 'low_priority', 'Low Priority'
+        OTHER = 'other', 'Other'
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assessment = models.ForeignKey(
+        SelfAssessment, on_delete=models.CASCADE, related_name='dismissed_suggestions',
+    )
+    store = models.ForeignKey(
+        'stores.Store', on_delete=models.CASCADE, related_name='dismissed_suggestions',
+    )
+    description = models.TextField(help_text='The AI suggestion text.')
+    priority = models.CharField(max_length=10, blank=True, default='')
+    reason = models.CharField(
+        max_length=20, choices=Reason.choices, blank=True, default='',
+    )
+    dismissed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='dismissed_suggestions',
+    )
+
+    class Meta:
+        db_table = 'walks_dismissedsuggestion'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f'Dismissed: {self.description[:50]} ({self.assessment_id})'
 
 
 # ==================== Feature 4: Corrective Action Escalation ====================

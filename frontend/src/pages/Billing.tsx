@@ -452,7 +452,7 @@ export default function Billing() {
                 ? plan.price_per_store_annual
                 : plan.price_per_store_monthly;
               const isCurrentPlan = subscription?.plan_slug === plan.slug;
-              const isPopular = plan.slug === 'pro';
+              const isPopular = plan.slug === 'enterprise';
 
               // Custom feature lists per tier with descriptions
               const PLAN_FEATURES: Record<string, { label: string; included: boolean }[]> = {
@@ -578,6 +578,14 @@ export default function Billing() {
                         className="w-full py-2.5 rounded-lg text-sm font-semibold bg-gray-100 text-gray-500 cursor-default"
                       >
                         Current Plan
+                      </button>
+                    ) : subscription?.is_active_subscription || subscription?.status === 'trialing' ? (
+                      <button
+                        onClick={handlePortal}
+                        disabled={portalLoading}
+                        className="w-full py-2.5 rounded-lg text-sm font-semibold bg-gray-900 text-white hover:bg-gray-800 transition-colors disabled:opacity-50"
+                      >
+                        {portalLoading ? 'Opening...' : 'Select Plan'}
                       </button>
                     ) : (
                       <button

@@ -12,7 +12,7 @@ from datetime import timedelta
 from decimal import Decimal
 
 from django.db.models import Avg, Count, F, Max, Q as models_Q, StdDev, Value
-from django.db.models.functions import TruncMonth, TruncWeek
+from django.db.models.functions import Coalesce, TruncMonth, TruncWeek
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework.permissions import IsAuthenticated
@@ -1139,13 +1139,21 @@ class ActionItemAnalyticsView(APIView):
 
     def get(self, request):
         period = request.query_params.get('period', '90d')
-        walks = _completed_walks_qs(request, period)
-        walk_ids = walks.values_list('id', flat=True)
+        start_date = _parse_period(period)
 
-        items = ActionItem.objects.filter(
-            organization=request.org,
-            walk_id__in=walk_ids,
-        )
+        # Include ALL action items (both walk-linked and assessment-linked)
+        items = ActionItem.objects.filter(organization=request.org)
+
+        # Apply role-based store scoping
+        accessible_ids = get_accessible_store_ids(request)
+        if accessible_ids is not None:
+            items = items.filter(
+                models_Q(walk__store_id__in=accessible_ids)
+                | models_Q(store_id__in=accessible_ids)
+            )
+
+        if start_date is not None:
+            items = items.filter(created_at__gte=start_date)
 
         total = items.count()
         if total == 0:
@@ -1186,9 +1194,13 @@ class ActionItemAnalyticsView(APIView):
                 count += 1
             avg_resolution = round(total_days / count, 1) if count > 0 else None
 
-        # By store
+        # By store — use direct store FK (falls back to walk__store for older items)
         by_store = (
-            items.values('walk__store__id', 'walk__store__name')
+            items.annotate(
+                effective_store_id=Coalesce('store_id', 'walk__store_id'),
+                effective_store_name=Coalesce('store__name', 'walk__store__name'),
+            )
+            .values('effective_store_id', 'effective_store_name')
             .annotate(
                 total=Count('id'),
                 open=Count('id', filter=models_Q(status='open')),
@@ -1198,18 +1210,19 @@ class ActionItemAnalyticsView(APIView):
         )
         store_list = [
             {
-                'store_id': str(s['walk__store__id']),
-                'store_name': s['walk__store__name'],
+                'store_id': str(s['effective_store_id']),
+                'store_name': s['effective_store_name'],
                 'total': s['total'],
                 'open': s['open'],
                 'resolved': s['resolved'],
             }
-            for s in by_store
+            for s in by_store if s['effective_store_id']
         ]
 
-        # By section
+        # By section (only relevant for walk-linked items with criteria)
         by_section = (
-            items.values('criterion__section__name')
+            items.filter(criterion__isnull=False)
+            .values('criterion__section__name')
             .annotate(count=Count('id'))
             .order_by('-count')
         )

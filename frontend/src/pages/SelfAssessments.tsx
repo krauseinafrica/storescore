@@ -13,6 +13,7 @@ import {
   uploadAssessmentSubmission,
   updateAssessmentSubmission,
   createAssessmentActionItems,
+  dismissAssessmentSuggestions,
   getStores,
 } from '../api/walks';
 import { getOrgId } from '../utils/org';
@@ -96,8 +97,10 @@ export function SelfAssessmentsContent() {
   // Action item approval
   const [selectedActions, setSelectedActions] = useState<Set<string>>(new Set());
   const [createdActions, setCreatedActions] = useState<Set<string>>(new Set());
+  const [dismissedActions, setDismissedActions] = useState<Set<string>>(new Set());
   const [actionEdits, setActionEdits] = useState<Record<string, { description: string; priority: string }>>({});
   const [creatingActions, setCreatingActions] = useState(false);
+  const [dismissingActions, setDismissingActions] = useState(false);
   const [createdActionCount, setCreatedActionCount] = useState(0);
 
   // Delete (detail panel)
@@ -150,11 +153,43 @@ export function SelfAssessmentsContent() {
     try {
       const data = await getAssessment(orgId, id);
       setDetail(data);
+      // Reconstruct accepted/dismissed state from backend data
+      reconstructActionState(data);
     } catch {
       setError('Failed to load assessment.');
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const reconstructActionState = (assessment: SelfAssessment) => {
+    const accepted = new Set(assessment.accepted_descriptions || []);
+    const dismissed = new Set(assessment.dismissed_descriptions || []);
+    if (accepted.size === 0 && dismissed.size === 0) return;
+
+    const newCreated = new Set<string>();
+    const newDismissed = new Set<string>();
+    let acceptedCount = 0;
+
+    for (const sub of (assessment.submissions || [])) {
+      if (!sub.ai_analysis) continue;
+      try {
+        const parsed = JSON.parse(sub.ai_analysis);
+        (parsed.action_items || []).forEach((ai: { action: string }, i: number) => {
+          const key = `${sub.id}-${i}`;
+          if (accepted.has(ai.action)) {
+            newCreated.add(key);
+            acceptedCount++;
+          } else if (dismissed.has(ai.action)) {
+            newDismissed.add(key);
+          }
+        });
+      } catch { /* skip */ }
+    }
+
+    setCreatedActions(newCreated);
+    setDismissedActions(newDismissed);
+    setCreatedActionCount(acceptedCount);
   };
 
   const openDetail = (id: string) => {
@@ -165,6 +200,7 @@ export function SelfAssessmentsContent() {
     });
     setDetail(null);
     setCreatedActions(new Set());
+    setDismissedActions(new Set());
     setCreatedActionCount(0);
     setSelectedActions(new Set());
   };
@@ -415,6 +451,67 @@ export function SelfAssessmentsContent() {
     }
   };
 
+  const handleDismissAction = async (actionKey: string, description: string, priority: string) => {
+    if (!detail) return;
+    setDismissingActions(true);
+    setError('');
+    try {
+      await dismissAssessmentSuggestions(orgId, detail.id, [
+        { description, priority: priority.toLowerCase(), reason: 'not_relevant' },
+      ]);
+      setDismissedActions(prev => new Set([...prev, actionKey]));
+      // Remove from selected if it was selected
+      setSelectedActions(prev => {
+        const next = new Set(prev);
+        next.delete(actionKey);
+        return next;
+      });
+      // Refresh detail to get updated counts
+      const updated = await getAssessment(orgId, detail.id);
+      setDetail(updated);
+    } catch {
+      setError('Failed to dismiss suggestion.');
+    } finally {
+      setDismissingActions(false);
+    }
+  };
+
+  const handleDismissRemaining = async () => {
+    if (!detail) return;
+    setDismissingActions(true);
+    setError('');
+    try {
+      // Collect all non-accepted, non-dismissed action items
+      const items: Array<{ description: string; priority: string; reason: string }> = [];
+      for (const sub of (detail.submissions || [])) {
+        if (!sub.ai_analysis) continue;
+        try {
+          const parsed = JSON.parse(sub.ai_analysis);
+          (parsed.action_items || []).forEach((ai: { priority: string; action: string }, i: number) => {
+            const key = `${sub.id}-${i}`;
+            if (!createdActions.has(key) && !dismissedActions.has(key) && !selectedActions.has(key)) {
+              items.push({
+                description: ai.action,
+                priority: (ai.priority || 'medium').toLowerCase(),
+                reason: 'not_relevant',
+              });
+              setDismissedActions(prev => new Set([...prev, key]));
+            }
+          });
+        } catch { /* skip */ }
+      }
+      if (items.length > 0) {
+        await dismissAssessmentSuggestions(orgId, detail.id, items);
+        const updated = await getAssessment(orgId, detail.id);
+        setDetail(updated);
+      }
+    } catch {
+      setError('Failed to dismiss suggestions.');
+    } finally {
+      setDismissingActions(false);
+    }
+  };
+
   const handleDelete = async () => {
     if (!detail) return;
     setDeleting(true);
@@ -656,29 +753,37 @@ export function SelfAssessmentsContent() {
                   </div>
                   <div>
                     <p className="font-medium text-gray-700">AI is analyzing your photos...</p>
-                    <p className="text-xs text-gray-400 mt-0.5">This usually takes 5-15 seconds. Action items will be created automatically.</p>
+                    <p className="text-xs text-gray-400 mt-0.5">This usually takes 5-15 seconds. AI will suggest action items for your review.</p>
                   </div>
                 </div>
               </div>
             )}
 
-            {/* AI findings — read-only for quick assessments */}
+            {/* AI findings for quick assessments */}
             {(detail.status === 'submitted' || detail.status === 'reviewed') && submissions.some(s => s.ai_analysis) && (
               <div className="space-y-4">
-                {/* Auto action items banner */}
-                <div className="rounded-xl bg-green-50 border border-green-200 p-4 flex items-center gap-3">
-                  <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <div>
-                    <p className="text-sm font-medium text-green-800">Action items created automatically</p>
-                    <p className="text-xs text-green-600 mt-0.5">View them on the <a href="/follow-ups#action-items" className="underline font-medium">Follow-ups page</a>.</p>
+                {/* Already-reviewed summary banner */}
+                {detail.suggestions_reviewed && (
+                  <div className="rounded-xl bg-green-50 border border-green-200 p-4 flex items-center gap-3">
+                    <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-green-800">
+                        {(detail.action_items_count || 0)} action item{(detail.action_items_count || 0) !== 1 ? 's' : ''} accepted
+                        {(detail.dismissed_count || 0) > 0 && <span className="text-green-600 font-normal"> · {detail.dismissed_count} dismissed</span>}
+                      </p>
+                      <p className="text-xs text-green-600 mt-0.5">View action items on the <a href="/follow-ups#action-items" className="underline font-medium">Follow-ups page</a>.</p>
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {submissions.filter(s => s.ai_analysis).map(s => {
                   let parsed: { summary?: string; findings?: string[]; action_items?: { priority: string; action: string }[] } | null = null;
                   try { parsed = JSON.parse(s.ai_analysis); } catch { /* legacy */ }
+
+                  // Count total suggestions for accept/dismiss UI header
+                  const totalSuggestions = parsed?.action_items?.length || 0;
 
                   return (
                     <div key={s.id} className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 overflow-hidden">
@@ -707,22 +812,95 @@ export function SelfAssessmentsContent() {
                                 </ul>
                               </div>
                             )}
-                            {parsed.action_items && parsed.action_items.length > 0 && (
+                            {/* Action items — accept/dismiss UI */}
+                            {totalSuggestions > 0 && (
                               <div>
-                                <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Action Items (Auto-Created)</h4>
-                                <div className="space-y-1.5">
-                                  {parsed.action_items.map((item, i) => {
+                                {!detail.suggestions_reviewed ? (
+                                  <>
+                                    <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-1">
+                                      AI Suggested Actions ({totalSuggestions} item{totalSuggestions !== 1 ? 's' : ''})
+                                    </h4>
+                                    <p className="text-xs text-gray-400 mb-3">Review and accept the items you want to track as action items.</p>
+                                  </>
+                                ) : (
+                                  <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Suggested Actions</h4>
+                                )}
+                                <div className="space-y-2">
+                                  {parsed.action_items!.map((item: { priority: string; action: string }, i: number) => {
                                     const prioStyles: Record<string, string> = {
                                       HIGH: 'bg-red-100 text-red-700',
                                       MEDIUM: 'bg-amber-100 text-amber-700',
                                       LOW: 'bg-gray-100 text-gray-600',
                                     };
+                                    const actionKey = `${s.id}-${i}`;
+                                    const isCreated = createdActions.has(actionKey);
+                                    const isDismissed = dismissedActions.has(actionKey);
+                                    const isSelected = selectedActions.has(actionKey);
+                                    const canInteract = !detail.suggestions_reviewed && !isCreated && !isDismissed;
+
+                                    const edit = actionEdits[actionKey];
+                                    const currentPrio = (edit?.priority ?? item.priority ?? 'LOW').toUpperCase();
+                                    const currentDesc = edit?.description ?? item.action;
+
                                     return (
-                                      <div key={i} className="flex items-start gap-2 p-2 rounded-lg bg-gray-50">
-                                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 mt-0.5 ${prioStyles[item.priority?.toUpperCase()] || prioStyles.LOW}`}>
-                                          {(item.priority || 'LOW').toUpperCase()}
-                                        </span>
-                                        <span className="text-sm text-gray-700">{item.action}</span>
+                                      <div key={i} className={`rounded-lg transition-colors ${isCreated ? 'bg-green-50 ring-1 ring-green-200' : isDismissed ? 'bg-gray-50 opacity-50' : isSelected ? 'bg-primary-50 ring-1 ring-primary-200' : 'hover:bg-gray-50'}`}>
+                                        <div className="flex items-start gap-2.5 p-2">
+                                          {canInteract && (
+                                            <input
+                                              type="checkbox"
+                                              checked={isSelected}
+                                              onChange={() => toggleAction(actionKey)}
+                                              className="mt-0.5 h-4 w-4 rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                                            />
+                                          )}
+                                          {isCreated && (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 mt-0.5 bg-green-100 text-green-700">
+                                              ACCEPTED
+                                            </span>
+                                          )}
+                                          {isDismissed && (
+                                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 mt-0.5 bg-gray-200 text-gray-500">
+                                              DISMISSED
+                                            </span>
+                                          )}
+                                          {canInteract && isSelected ? (
+                                            <select
+                                              value={currentPrio}
+                                              onChange={e => setActionEdits(prev => ({ ...prev, [actionKey]: { description: currentDesc, priority: e.target.value } }))}
+                                              className={`text-[10px] font-semibold rounded px-1.5 py-0.5 border-0 ${prioStyles[currentPrio] || prioStyles.LOW}`}
+                                            >
+                                              <option value="HIGH">HIGH</option>
+                                              <option value="MEDIUM">MEDIUM</option>
+                                              <option value="LOW">LOW</option>
+                                            </select>
+                                          ) : (
+                                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold flex-shrink-0 mt-0.5 ${prioStyles[currentPrio] || prioStyles.LOW}`}>
+                                              {currentPrio}
+                                            </span>
+                                          )}
+                                          {!(canInteract && isSelected) && (
+                                            <span className={`text-sm flex-1 ${isDismissed ? 'text-gray-400 line-through' : 'text-gray-700'}`}>{currentDesc}</span>
+                                          )}
+                                          {canInteract && !isSelected && (
+                                            <button
+                                              onClick={() => handleDismissAction(actionKey, item.action, item.priority || 'medium')}
+                                              disabled={dismissingActions}
+                                              className="text-xs text-gray-400 hover:text-red-500 px-2 py-0.5 rounded hover:bg-red-50 transition-colors flex-shrink-0"
+                                            >
+                                              Dismiss
+                                            </button>
+                                          )}
+                                        </div>
+                                        {canInteract && isSelected && (
+                                          <div className="px-2 pb-2 pl-9">
+                                            <textarea
+                                              value={currentDesc}
+                                              onChange={e => setActionEdits(prev => ({ ...prev, [actionKey]: { description: e.target.value, priority: currentPrio } }))}
+                                              rows={2}
+                                              className="block w-full rounded-lg border border-gray-200 px-2.5 py-1.5 text-sm text-gray-700 focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 focus:outline-none"
+                                            />
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })}
@@ -737,6 +915,74 @@ export function SelfAssessmentsContent() {
                     </div>
                   );
                 })}
+
+                {/* Accept/dismiss action bar for quick assessments */}
+                {!detail.suggestions_reviewed && (selectedActions.size > 0 || submissions.some(s => {
+                  try { const p = JSON.parse(s.ai_analysis); return (p.action_items?.length || 0) > 0; } catch { return false; }
+                })) && (
+                  <div className="bg-white rounded-xl shadow-sm ring-1 ring-gray-900/5 p-4 flex items-center justify-between gap-3">
+                    <p className="text-sm text-gray-700">
+                      {selectedActions.size > 0 ? (
+                        <><span className="font-semibold">{selectedActions.size}</span> item{selectedActions.size !== 1 ? 's' : ''} selected</>
+                      ) : (
+                        <span className="text-gray-400">Select items to accept, or dismiss remaining</span>
+                      )}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        // Count remaining (not created and not dismissed)
+                        let remaining = 0;
+                        for (const sub of (detail.submissions || [])) {
+                          try {
+                            const p = JSON.parse(sub.ai_analysis);
+                            (p.action_items || []).forEach((_: unknown, i: number) => {
+                              const key = `${sub.id}-${i}`;
+                              if (!createdActions.has(key) && !dismissedActions.has(key) && !selectedActions.has(key)) remaining++;
+                            });
+                          } catch { /* skip */ }
+                        }
+                        return remaining > 0 ? (
+                          <button
+                            onClick={handleDismissRemaining}
+                            disabled={dismissingActions}
+                            className="rounded-lg px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 border border-gray-200 transition-colors disabled:opacity-50"
+                          >
+                            {dismissingActions ? 'Dismissing...' : `Dismiss Remaining (${remaining})`}
+                          </button>
+                        ) : null;
+                      })()}
+                      {selectedActions.size > 0 && (
+                        <button
+                          onClick={handleApproveActions}
+                          disabled={creatingActions}
+                          className="rounded-lg bg-primary-600 px-4 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-primary-700 disabled:opacity-50 transition-colors flex items-center gap-1.5"
+                        >
+                          {creatingActions ? (
+                            <>
+                              <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                              Creating...
+                            </>
+                          ) : (
+                            <>Accept Selected ({selectedActions.size})</>
+                          )}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+                {/* Success message after creating action items */}
+                {createdActionCount > 0 && (
+                  <div className="rounded-xl bg-green-50 border border-green-200 p-4 flex items-center gap-3">
+                    <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                      <p className="text-sm font-medium text-green-800">{createdActionCount} action item{createdActionCount !== 1 ? 's' : ''} created</p>
+                      <p className="text-xs text-green-600 mt-0.5">Assigned to the store manager. View them on the <a href="/follow-ups#action-items" className="underline font-medium">Follow-ups page</a>.</p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1520,7 +1766,7 @@ export function SelfAssessmentsContent() {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={e => e.stopPropagation()}>
             <div className="px-6 py-4 border-b border-gray-100">
               <h2 className="text-lg font-semibold text-gray-900">New Quick Assessment</h2>
-              <p className="text-xs text-gray-500 mt-1">Snap freeform photos at a store. AI will analyze them and auto-create action items.</p>
+              <p className="text-xs text-gray-500 mt-1">Snap freeform photos at a store. AI will analyze them and suggest action items for your review.</p>
             </div>
             <div className="px-6 py-4 space-y-4">
               <div>

@@ -766,6 +766,7 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
     submissions = AssessmentSubmissionSerializer(many=True, read_only=True)
     prompts = serializers.SerializerMethodField()
     action_items_count = serializers.SerializerMethodField()
+    dismissed_count = serializers.SerializerMethodField()
     is_quick = serializers.BooleanField(read_only=True)
 
     class Meta:
@@ -775,12 +776,15 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
             'submitted_by', 'submitted_by_name', 'reviewed_by',
             'reviewed_by_name', 'status', 'due_date', 'submitted_at',
             'reviewed_at', 'reviewer_notes', 'submissions', 'prompts',
-            'action_items_count', 'assessment_type', 'area', 'is_quick',
+            'action_items_count', 'dismissed_count', 'suggestions_reviewed',
+            'accepted_descriptions', 'dismissed_descriptions',
+            'assessment_type', 'area', 'is_quick',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
             'id', 'submitted_at',
             'reviewed_at', 'created_at', 'updated_at',
+            'suggestions_reviewed',
         ]
 
     def __init__(self, *args, **kwargs):
@@ -809,6 +813,18 @@ class SelfAssessmentDetailSerializer(serializers.ModelSerializer):
 
     def get_action_items_count(self, obj):
         return obj.action_items.count()
+
+    def get_dismissed_count(self, obj):
+        return obj.dismissed_suggestions.count()
+
+    accepted_descriptions = serializers.SerializerMethodField()
+    dismissed_descriptions = serializers.SerializerMethodField()
+
+    def get_accepted_descriptions(self, obj):
+        return list(obj.action_items.values_list('description', flat=True))
+
+    def get_dismissed_descriptions(self, obj):
+        return list(obj.dismissed_suggestions.values_list('description', flat=True))
 
 
 # ==================== Feature 4: Corrective Action Escalation ====================

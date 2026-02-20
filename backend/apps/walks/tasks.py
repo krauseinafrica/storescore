@@ -618,13 +618,6 @@ Be specific about what you actually see. Reference actual products, shelf positi
 
     logger.info(f'Assessment {assessment_id}: AI evaluation complete for {submissions.count()} submissions')
 
-    # For quick assessments, auto-create action items from AI findings
-    if is_quick:
-        try:
-            _auto_create_quick_assessment_action_items(assessment)
-        except Exception as e:
-            logger.error(f'Failed to auto-create action items for quick assessment {assessment_id}: {e}')
-
     # Send review notification email
     try:
         from .services import send_assessment_review_notification

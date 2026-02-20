@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useSubscription } from '../hooks/useSubscription';
 import FeatureGate from '../components/FeatureGate';
@@ -212,12 +212,23 @@ export default function Settings() {
   const { hasRole } = useAuth();
   const { hasFeature } = useSubscription();
   const navigate = useNavigate();
+  const location = useLocation();
   const orgId = getOrgId();
   const isAdmin = hasRole('admin');
 
   const hasGamification = hasFeature('gamification_basic') || hasFeature('gamification_advanced');
 
-  const [tab, setTab] = useState<Tab>('organization');
+  const VALID_TABS = new Set<Tab>(['organization', 'goals', 'settings', 'billing']);
+  const hashTab = location.hash.replace('#', '') as Tab;
+  const initialTab = VALID_TABS.has(hashTab) && hashTab !== 'billing' ? hashTab : 'organization';
+  const [tab, setTab] = useState<Tab>(initialTab);
+
+  useEffect(() => {
+    const t = location.hash.replace('#', '') as Tab;
+    if (VALID_TABS.has(t) && t !== 'billing' && t !== tab) {
+      setTab(t);
+    }
+  }, [location.hash]);
   const [loading, setLoading] = useState(true);
 
   // Org profile state
@@ -397,6 +408,7 @@ export default function Settings() {
                 navigate('/billing');
               } else {
                 setTab(t.key);
+                navigate(`/settings#${t.key}`, { replace: true });
               }
             }}
             className={`flex-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
@@ -636,6 +648,110 @@ export default function Settings() {
       ) : (
         /* ---------- Settings Tab ---------- */
         <div className="space-y-6">
+          {/* Location Verification */}
+          <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-5 shadow-sm">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  Location Verification
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Control whether evaluators must be physically at the store to start a walk.
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {/* Enforcement Mode */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  Enforcement Mode
+                </label>
+                <div className="flex gap-2">
+                  {[
+                    { value: 'advisory', label: 'Advisory', desc: 'Warn but allow' },
+                    { value: 'strict', label: 'Strict', desc: 'Block if too far' },
+                  ].map((mode) => (
+                    <button
+                      key={mode.value}
+                      onClick={async () => {
+                        if (settingsSaving) return;
+                        setSettingsSaving(true);
+                        try {
+                          const updated = await updateOrgSettings(orgId, { location_enforcement: mode.value } as any);
+                          setSettings(updated);
+                        } catch { /* ignore */ }
+                        setSettingsSaving(false);
+                      }}
+                      disabled={settingsSaving}
+                      className={`flex-1 px-4 py-3 rounded-lg text-sm font-medium border-2 transition-all ${
+                        (settings as any)?.location_enforcement === mode.value
+                          ? 'border-primary-600 bg-primary-50 text-primary-700'
+                          : 'border-gray-200 text-gray-600 hover:border-gray-300'
+                      }`}
+                    >
+                      <div className="font-semibold">{mode.label}</div>
+                      <div className="text-xs font-normal mt-0.5 text-gray-400">{mode.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Verification Radius */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">
+                  Verification Radius: {(settings as any)?.verification_radius_meters || 500}m
+                </label>
+                <input
+                  type="range"
+                  min={50}
+                  max={5000}
+                  step={50}
+                  value={(settings as any)?.verification_radius_meters || 500}
+                  onChange={async (e) => {
+                    const val = Number(e.target.value);
+                    setSettings((prev: any) => prev ? { ...prev, verification_radius_meters: val } : prev);
+                  }}
+                  onMouseUp={async (e) => {
+                    const val = Number((e.target as HTMLInputElement).value);
+                    setSettingsSaving(true);
+                    try {
+                      await updateOrgSettings(orgId, { verification_radius_meters: val } as any);
+                    } catch { /* ignore */ }
+                    setSettingsSaving(false);
+                  }}
+                  onTouchEnd={async (e) => {
+                    const val = Number((e.target as HTMLInputElement).value);
+                    setSettingsSaving(true);
+                    try {
+                      await updateOrgSettings(orgId, { verification_radius_meters: val } as any);
+                    } catch { /* ignore */ }
+                    setSettingsSaving(false);
+                  }}
+                  className="w-full h-2 bg-gray-200 rounded-full appearance-none cursor-pointer accent-primary-600"
+                />
+                <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+                  <span>50m</span>
+                  <span>500m</span>
+                  <span>2500m</span>
+                  <span>5000m</span>
+                </div>
+              </div>
+
+              {(settings as any)?.location_enforcement === 'strict' && (
+                <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+                  <p className="text-xs text-amber-800">
+                    <strong>Strict mode enabled:</strong> Evaluators will be blocked from starting walks if they are more than {(settings as any)?.verification_radius_meters || 500}m from the store. They must enable location services in their browser.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+
           {/* Benchmarking */}
           <div className="bg-white rounded-xl ring-1 ring-gray-900/5 p-5 shadow-sm">
             <div className="flex items-start justify-between">

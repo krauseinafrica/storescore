@@ -51,7 +51,6 @@ const tiers: PricingTier[] = [
       'Action items & follow-ups',
       'Achievement badges & milestones',
       'Evaluation scheduling',
-      'Self-assessments',
       'Goals & KPI tracking',
       'Advanced analytics & trends',
       'Weekly & monthly email digests',
@@ -70,6 +69,7 @@ const tiers: PricingTier[] = [
     inheritLabel: 'Everything in Pro, plus:',
     features: [
       'Unlimited users',
+      'Self-assessments & quick assessments',
       'Leaderboards, challenges & advanced badges',
       'AI photo analysis & scoring',
       'External evaluator access',
@@ -78,6 +78,92 @@ const tiers: PricingTier[] = [
       'Scheduled PDF reports',
       'Custom branded emails',
       'API access',
+    ],
+  },
+];
+
+interface ComparisonRow {
+  feature: string;
+  starter: boolean | string;
+  pro: boolean | string;
+  enterprise: boolean | string;
+}
+
+interface ComparisonGroup {
+  category: string;
+  rows: ComparisonRow[];
+}
+
+const comparisonGroups: ComparisonGroup[] = [
+  {
+    category: 'Core Evaluations',
+    rows: [
+      { feature: 'Store walks & photo documentation', starter: true, pro: true, enterprise: true },
+      { feature: 'AI walk summaries', starter: true, pro: true, enterprise: true },
+      { feature: 'Department evaluations', starter: true, pro: true, enterprise: true },
+      { feature: 'Scoring templates', starter: '1', pro: 'Unlimited', enterprise: 'Unlimited' },
+      { feature: 'Walks per store/month', starter: '10', pro: 'Unlimited', enterprise: 'Unlimited' },
+    ],
+  },
+  {
+    category: 'Action Items & Follow-ups',
+    rows: [
+      { feature: 'Action items from evaluations', starter: true, pro: true, enterprise: true },
+      { feature: 'Photo-verified resolution', starter: true, pro: true, enterprise: true },
+      { feature: 'Priority levels & escalation', starter: true, pro: true, enterprise: true },
+    ],
+  },
+  {
+    category: 'AI & Intelligence',
+    rows: [
+      { feature: 'AI-powered walk summaries', starter: true, pro: true, enterprise: true },
+      { feature: 'AI photo analysis & scoring', starter: false, pro: false, enterprise: true },
+      { feature: 'Quick assessments with AI', starter: false, pro: false, enterprise: true },
+    ],
+  },
+  {
+    category: 'Scheduling & Automation',
+    rows: [
+      { feature: 'Email digest reports', starter: true, pro: true, enterprise: true },
+      { feature: 'Evaluation scheduling', starter: false, pro: true, enterprise: true },
+      { feature: 'Automatic walk creation', starter: false, pro: true, enterprise: true },
+      { feature: 'Calendar feeds (iCal)', starter: false, pro: true, enterprise: true },
+      { feature: 'Scheduled PDF reports', starter: false, pro: false, enterprise: true },
+    ],
+  },
+  {
+    category: 'Gamification & Engagement',
+    rows: [
+      { feature: 'Achievement badges & milestones', starter: false, pro: true, enterprise: true },
+      { feature: 'Leaderboards & challenges', starter: false, pro: false, enterprise: true },
+      { feature: 'Self-assessments', starter: false, pro: false, enterprise: true },
+    ],
+  },
+  {
+    category: 'Analytics & Reporting',
+    rows: [
+      { feature: 'Store comparison overview', starter: true, pro: true, enterprise: true },
+      { feature: 'Advanced analytics & trends', starter: false, pro: true, enterprise: true },
+      { feature: 'Goals & KPI tracking', starter: false, pro: true, enterprise: true },
+      { feature: 'Store benchmarking & rankings', starter: false, pro: true, enterprise: true },
+      { feature: 'CSV data export', starter: false, pro: true, enterprise: true },
+    ],
+  },
+  {
+    category: 'Team & Access',
+    rows: [
+      { feature: 'Users', starter: '5', pro: '25', enterprise: 'Unlimited' },
+      { feature: 'Role-based access', starter: true, pro: true, enterprise: true },
+      { feature: 'External evaluator access', starter: false, pro: false, enterprise: true },
+      { feature: 'Custom branded emails', starter: false, pro: false, enterprise: true },
+    ],
+  },
+  {
+    category: 'Integrations',
+    rows: [
+      { feature: 'POS & inventory integrations', starter: false, pro: false, enterprise: true },
+      { feature: 'Sales-quality correlation', starter: false, pro: false, enterprise: true },
+      { feature: 'API access', starter: false, pro: false, enterprise: true },
     ],
   },
 ];
@@ -115,6 +201,7 @@ function getVolumeDiscount(stores: number): number {
 
 const enterpriseExtras = [
   'Unlimited users',
+  'Self-assessments & quick assessments',
   'AI photo analysis & scoring',
   'POS & inventory integrations',
   'Sales-quality correlation',
@@ -156,6 +243,7 @@ function PricingCalculator() {
     ],
     Enterprise: [
       'Unlimited users',
+      'Self-assessments & quick assessments',
       'AI photo analysis & scoring',
       'POS & inventory integrations',
       'Sales-quality correlation',
@@ -450,6 +538,7 @@ function FaqItem({ question, answer }: { question: string; answer: string }) {
 
 export default function Pricing() {
   const [billingCycle, setBillingCycle] = useState<BillingCycle>('monthly');
+  const [mobilePlan, setMobilePlan] = useState<'starter' | 'pro' | 'enterprise'>('pro');
 
   const faqSchema = {
     '@context': 'https://schema.org',
@@ -652,6 +741,144 @@ export default function Pricing() {
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Feature Comparison Matrix */}
+      <section className="py-16 sm:py-20 bg-gray-50">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="text-center mb-12">
+            <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">
+              Compare plans side by side
+            </h2>
+            <p className="mt-3 text-base text-gray-600">
+              See exactly what's included in every plan.
+            </p>
+          </div>
+
+          {/* Mobile: plan toggle + single column */}
+          <div className="sm:hidden">
+            <div className="flex rounded-lg bg-gray-100 p-1 mb-6">
+              {(['starter', 'pro', 'enterprise'] as const).map((plan) => {
+                const label = plan === 'starter' ? 'Starter' : plan === 'pro' ? 'Pro' : 'Enterprise';
+                const price = plan === 'starter' ? 29 : plan === 'pro' ? 49 : 79;
+                return (
+                  <button
+                    key={plan}
+                    onClick={() => setMobilePlan(plan)}
+                    className={`flex-1 py-2 px-1 rounded-md text-center transition-all ${
+                      mobilePlan === plan
+                        ? 'bg-white shadow-sm text-gray-900 font-semibold'
+                        : 'text-gray-500'
+                    }`}
+                  >
+                    <div className="text-sm">{label}</div>
+                    <div className="text-xs">{formatPrice(price, billingCycle)}/mo</div>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-900/5 overflow-hidden">
+              {comparisonGroups.map((group) => (
+                <div key={group.category}>
+                  <div className="px-4 py-2.5 bg-gray-50 border-b border-gray-100">
+                    <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{group.category}</span>
+                  </div>
+                  {group.rows.map((row, i) => {
+                    const val = row[mobilePlan];
+                    return (
+                      <div
+                        key={row.feature}
+                        className={`flex items-center justify-between px-4 py-3 ${
+                          i < group.rows.length - 1 ? 'border-b border-gray-50' : 'border-b border-gray-100'
+                        }`}
+                      >
+                        <span className="text-sm text-gray-700">{row.feature}</span>
+                        {val === true ? (
+                          <svg className="w-5 h-5 text-green-500 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : val === false ? (
+                          <span className="text-gray-300 flex-shrink-0">—</span>
+                        ) : (
+                          <span className="text-sm font-medium text-gray-700 flex-shrink-0">{val}</span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Desktop: full grid */}
+          <div className="hidden sm:block">
+            <div className="bg-white rounded-2xl shadow-sm ring-1 ring-gray-900/5 overflow-hidden">
+              {/* Sticky header */}
+              <div className="sticky top-0 z-10 grid grid-cols-[1fr_repeat(3,120px)] border-b border-gray-200 bg-white">
+                <div className="p-4" />
+                <div className="p-4 text-center">
+                  <div className="text-sm font-semibold text-gray-900">Starter</div>
+                  <div className="text-xs text-gray-500">{formatPrice(29, billingCycle)}/mo</div>
+                </div>
+                <div className="p-4 text-center bg-primary-50/50 border-x border-primary-100">
+                  <div className="text-sm font-semibold text-primary-700">Pro</div>
+                  <div className="text-xs text-primary-600">{formatPrice(49, billingCycle)}/mo</div>
+                </div>
+                <div className="p-4 text-center">
+                  <div className="text-sm font-semibold text-gray-900">Enterprise</div>
+                  <div className="text-xs text-gray-500">{formatPrice(79, billingCycle)}/mo</div>
+                </div>
+              </div>
+
+              {/* Groups */}
+              {comparisonGroups.map((group) => (
+                <div key={group.category}>
+                  <div className="grid grid-cols-[1fr_repeat(3,120px)] bg-gray-50 border-b border-gray-100">
+                    <div className="px-4 py-2.5">
+                      <span className="text-xs font-semibold uppercase tracking-wider text-gray-500">{group.category}</span>
+                    </div>
+                    <div />
+                    <div className="bg-primary-50/30 border-x border-primary-100" />
+                    <div />
+                  </div>
+
+                  {group.rows.map((row, i) => (
+                    <div
+                      key={row.feature}
+                      className={`grid grid-cols-[1fr_repeat(3,120px)] ${
+                        i < group.rows.length - 1 ? 'border-b border-gray-50' : 'border-b border-gray-100'
+                      }`}
+                    >
+                      <div className="px-4 py-3 text-sm text-gray-700">{row.feature}</div>
+                      {(['starter', 'pro', 'enterprise'] as const).map((plan) => {
+                        const val = row[plan];
+                        return (
+                          <div
+                            key={plan}
+                            className={`px-4 py-3 text-center flex items-center justify-center ${
+                              plan === 'pro' ? 'bg-primary-50/30 border-x border-primary-100' : ''
+                            }`}
+                          >
+                            {val === true ? (
+                              <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            ) : val === false ? (
+                              <span className="text-gray-300">—</span>
+                            ) : (
+                              <span className="text-sm font-medium text-gray-700">{val}</span>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       </section>

@@ -227,6 +227,17 @@ CORS_ALLOWED_ORIGINS = config(
     cast=Csv(),
 )
 CORS_ALLOW_CREDENTIALS = True
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'authorization',
+    'content-type',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'x-organization',
+    'sentry-trace',
+    'baggage',
+]
 
 # Claude API (Anthropic)
 ANTHROPIC_API_KEY = config('ANTHROPIC_API_KEY', default='')

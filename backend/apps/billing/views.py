@@ -85,6 +85,25 @@ class CheckoutView(APIView):
             defaults={'plan': plan, 'store_count': 1},
         )
 
+        # If customer already has an active Stripe subscription, redirect
+        # them to the Customer Portal for plan changes instead of creating
+        # a new checkout that would offer another trial.
+        if subscription.stripe_subscription_id and subscription.status in (
+            'active', 'trialing', 'past_due',
+        ):
+            try:
+                portal_session = stripe.billing_portal.Session.create(
+                    customer=subscription.stripe_customer_id,
+                    return_url=success_url or request.build_absolute_uri('/billing'),
+                )
+                return Response({'checkout_url': portal_session.url})
+            except stripe.error.StripeError as e:
+                logger.error(f'Stripe portal redirect error: {e}')
+                return Response(
+                    {'detail': 'Failed to open billing portal for plan change.'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
         # Get or create Stripe customer
         if not subscription.stripe_customer_id:
             customer = stripe.Customer.create(
@@ -105,6 +124,17 @@ class CheckoutView(APIView):
         ).count()
         store_count = max(store_count, 1)
 
+        # Only offer a trial if this customer has never had one
+        has_had_trial = subscription.trial_start is not None
+        subscription_data = {
+            'metadata': {
+                'organization_id': str(request.org.id),
+                'plan_slug': plan.slug,
+            },
+        }
+        if not has_had_trial:
+            subscription_data['trial_period_days'] = 30
+
         try:
             checkout_session = stripe.checkout.Session.create(
                 customer=subscription.stripe_customer_id,
@@ -113,13 +143,7 @@ class CheckoutView(APIView):
                     'price': price_id,
                     'quantity': store_count,
                 }],
-                subscription_data={
-                    'trial_period_days': 30,
-                    'metadata': {
-                        'organization_id': str(request.org.id),
-                        'plan_slug': plan.slug,
-                    },
-                },
+                subscription_data=subscription_data,
                 success_url=success_url or f'{request.build_absolute_uri("/billing")}?success=true',
                 cancel_url=cancel_url or request.build_absolute_uri('/billing'),
                 metadata={
