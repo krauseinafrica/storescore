@@ -19,3 +19,8 @@ X_FRAME_OPTIONS = 'DENY'
 SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
+
+# Rate limiting: tell DRF how many proxies sit in front of the app
+# Traffic path: Client → Cloudflare → host nginx → gunicorn (2 proxies)
+# This makes AnonRateThrottle read the real client IP from X-Forwarded-For
+NUM_PROXIES = 2

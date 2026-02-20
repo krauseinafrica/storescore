@@ -462,7 +462,7 @@ The ultimate insight StoreScore unlocks:
 - [ ] **Social proof section** — Testimonials, store count, evaluation count
 
 ### Enterprise / Mega-Group Strategy
-- [ ] **`/enterprise` landing page** — Tailored for 10-50+ location operators (any industry)
+- [x] **`/enterprise` landing page** — Tailored for 10-50+ location operators (any industry)
   - Focus on: benchmarking, regional manager efficiency, API integrations, quality-to-sales correlation
   - "Operations at scale" language — VP of Ops / Director of Store Standards pain points
   - ROI calculator (estimate time saved, consistency improvement, revenue lift)
@@ -614,7 +614,9 @@ See [VIDEO_AI_ANALYSIS.md](./VIDEO_AI_ANALYSIS.md) for the full technical plan, 
 - [x] Rate limiting on API (anon 30/min, login 5/min, lead capture 10/min, user 120/min)
 - [x] JWT refresh token blacklisting after rotation (BLACKLIST_AFTER_ROTATION: True)
 - [ ] S3 private ACL for uploaded files (HIGH — currently public-read)
-- [ ] HSTS + security headers in Nginx (HIGH)
+- [x] HSTS + security headers in Nginx (host nginx: HSTS preload + X-Frame-Options + X-Content-Type + Referrer-Policy)
+- [x] Cloudflare real IP restoration (CF-Connecting-IP → set_real_ip_from in nginx)
+- [x] Redis cache backend for DRF rate limiting (shared across gunicorn workers)
 - [ ] Docker containers: run as non-root user (HIGH)
 - [ ] Redis authentication (MEDIUM)
 - [ ] Audit logging (who changed what, when)

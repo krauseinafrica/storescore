@@ -33,6 +33,7 @@ const Pricing = lazyRetry(() => import('./pages/public/Pricing'));
 const RequestDemo = lazyRetry(() => import('./pages/public/RequestDemo'));
 const Signup = lazyRetry(() => import('./pages/public/Signup'));
 const Compare = lazyRetry(() => import('./pages/public/Compare'));
+const Enterprise = lazyRetry(() => import('./pages/public/Enterprise'));
 
 // Lazy-loaded pages — auth
 const Login = lazyRetry(() => import('./pages/Login'));
@@ -84,6 +85,7 @@ function AppRoutes() {
         <Route path="/signup" element={<Signup />} />
         <Route path="/compare" element={<Compare />} />
         <Route path="/compare/:slug" element={<Compare />} />
+        <Route path="/enterprise" element={<Enterprise />} />
       </Route>
 
       {/* Protected routes */}

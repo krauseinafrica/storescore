@@ -6,7 +6,7 @@ const navLinks = [
   { label: 'Tour', path: '/tour' },
   { label: 'Features', path: '/features' },
   { label: 'Pricing', path: '/pricing' },
-  { label: 'Compare', path: '/compare' },
+  { label: 'Enterprise', path: '/enterprise' },
   { label: 'Request Demo', path: '/request-demo' },
 ];
 
@@ -189,6 +189,11 @@ export default function PublicLayout() {
                 <li>
                   <Link to="/pricing" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
                     Pricing
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/enterprise" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                    Enterprise
                   </Link>
                 </li>
                 <li>

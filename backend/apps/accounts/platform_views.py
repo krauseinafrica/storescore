@@ -524,11 +524,17 @@ class PlatformOrgStoreImportView(APIView):
 
 class LeadListView(APIView):
     """GET/POST /api/v1/auth/leads/ — list leads (admin) or create lead (public)."""
+    throttle_classes = [LeadCaptureRateThrottle]
 
     def get_permissions(self):
         if self.request.method == 'POST':
             return [AllowAny()]
         return [IsAuthenticated(), IsAdminUser()]
+
+    def get_throttles(self):
+        if self.request.method == 'POST':
+            return [LeadCaptureRateThrottle()]
+        return []
 
     def get(self, request):
         from .leads import Lead

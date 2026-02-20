@@ -126,6 +126,14 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = 105 * 1024 * 1024  # 105 MB total
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# Cache — Redis (shared across gunicorn workers for rate limiting)
+CACHES = {
+    'default': {
+        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+        'LOCATION': config('CELERY_BROKER_URL', default='redis://redis:6379/0'),
+    }
+}
+
 # Django REST Framework
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
