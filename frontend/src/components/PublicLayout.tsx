@@ -6,6 +6,7 @@ const navLinks = [
   { label: 'Tour', path: '/tour' },
   { label: 'Features', path: '/features' },
   { label: 'Pricing', path: '/pricing' },
+  { label: 'Compare', path: '/compare' },
   { label: 'Request Demo', path: '/request-demo' },
 ];
 
@@ -13,7 +14,8 @@ export default function PublicLayout() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const location = useLocation();
 
-  const isActive = (path: string) => location.pathname === path;
+  const isActive = (path: string) =>
+    location.pathname === path || (path === '/compare' && location.pathname.startsWith('/compare'));
 
   return (
     <div className="min-h-screen flex flex-col bg-white">
@@ -192,6 +194,16 @@ export default function PublicLayout() {
                 <li>
                   <Link to="/request-demo" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
                     Request Demo
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/compare/bindy" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                    StoreScore vs Bindy
+                  </Link>
+                </li>
+                <li>
+                  <Link to="/compare/safetyculture" className="text-sm text-gray-500 hover:text-gray-700 transition-colors">
+                    StoreScore vs SafetyCulture
                   </Link>
                 </li>
               </ul>

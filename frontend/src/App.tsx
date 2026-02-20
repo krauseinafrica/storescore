@@ -6,46 +6,65 @@ import ProtectedRoute from './components/ProtectedRoute';
 import RoleGuard from './components/RoleGuard';
 import Layout from './components/Layout';
 import PublicLayout from './components/PublicLayout';
+import OfflineBanner from './components/OfflineBanner';
+
+// Auto-reload on chunk load failure (stale deployment cache)
+function lazyRetry(factory: () => Promise<{ default: React.ComponentType<unknown> }>) {
+  return lazy(() =>
+    factory().catch(() => {
+      // Old chunk gone after deploy — reload once to get fresh assets
+      const key = 'chunk_reload';
+      if (!sessionStorage.getItem(key)) {
+        sessionStorage.setItem(key, '1');
+        window.location.reload();
+      }
+      // Clear flag so future deploys also retry
+      sessionStorage.removeItem(key);
+      return factory();
+    }),
+  );
+}
 
 // Lazy-loaded pages — public marketing
-const Home = lazy(() => import('./pages/public/Home'));
-const Features = lazy(() => import('./pages/public/Features'));
-const Tour = lazy(() => import('./pages/public/Tour'));
-const Pricing = lazy(() => import('./pages/public/Pricing'));
-const RequestDemo = lazy(() => import('./pages/public/RequestDemo'));
-const Signup = lazy(() => import('./pages/public/Signup'));
+const Home = lazyRetry(() => import('./pages/public/Home'));
+const Features = lazyRetry(() => import('./pages/public/Features'));
+const Tour = lazyRetry(() => import('./pages/public/Tour'));
+const Pricing = lazyRetry(() => import('./pages/public/Pricing'));
+const RequestDemo = lazyRetry(() => import('./pages/public/RequestDemo'));
+const Signup = lazyRetry(() => import('./pages/public/Signup'));
+const Compare = lazyRetry(() => import('./pages/public/Compare'));
 
 // Lazy-loaded pages — auth
-const Login = lazy(() => import('./pages/Login'));
-const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
-const ResetPassword = lazy(() => import('./pages/ResetPassword'));
+const Login = lazyRetry(() => import('./pages/Login'));
+const ForgotPassword = lazyRetry(() => import('./pages/ForgotPassword'));
+const ResetPassword = lazyRetry(() => import('./pages/ResetPassword'));
 
 // Lazy-loaded pages — app
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const Stores = lazy(() => import('./pages/Stores'));
-const Reports = lazy(() => import('./pages/Reports'));
-const Team = lazy(() => import('./pages/Team'));
-const Evaluations = lazy(() => import('./pages/Evaluations'));
-const NewWalk = lazy(() => import('./pages/walks/NewWalk'));
-const ConductWalk = lazy(() => import('./pages/walks/ConductWalk'));
-const WalkReview = lazy(() => import('./pages/walks/WalkReview'));
-const WalkDetail = lazy(() => import('./pages/walks/WalkDetail'));
-const PlatformAdmin = lazy(() => import('./pages/PlatformAdmin'));
-const Settings = lazy(() => import('./pages/Settings'));
-const Account = lazy(() => import('./pages/Account'));
-const ActionItemDetail = lazy(() => import('./pages/ActionItemDetail'));
-const SOPDocumentDetail = lazy(() => import('./pages/SOPDocumentDetail'));
-const Billing = lazy(() => import('./pages/Billing'));
-const KnowledgeBase = lazy(() => import('./pages/KnowledgeBase'));
-const KnowledgeArticlePage = lazy(() => import('./pages/KnowledgeArticlePage'));
-const GettingStarted = lazy(() => import('./pages/GettingStarted'));
-const Departments = lazy(() => import('./pages/Departments'));
-const DepartmentEval = lazy(() => import('./pages/walks/DepartmentEval'));
-const Gamification = lazy(() => import('./pages/Gamification'));
-const FollowUps = lazy(() => import('./pages/FollowUps'));
-const Templates = lazy(() => import('./pages/Templates'));
-const DataIntegrations = lazy(() => import('./pages/DataIntegrations'));
-const Support = lazy(() => import('./pages/Support'));
+const Dashboard = lazyRetry(() => import('./pages/Dashboard'));
+const Stores = lazyRetry(() => import('./pages/Stores'));
+const Reports = lazyRetry(() => import('./pages/Reports'));
+const Team = lazyRetry(() => import('./pages/Team'));
+const Evaluations = lazyRetry(() => import('./pages/Evaluations'));
+const NewWalk = lazyRetry(() => import('./pages/walks/NewWalk'));
+const ConductWalk = lazyRetry(() => import('./pages/walks/ConductWalk'));
+const WalkReview = lazyRetry(() => import('./pages/walks/WalkReview'));
+const WalkDetail = lazyRetry(() => import('./pages/walks/WalkDetail'));
+const PlatformAdmin = lazyRetry(() => import('./pages/PlatformAdmin'));
+const Settings = lazyRetry(() => import('./pages/Settings'));
+const Account = lazyRetry(() => import('./pages/Account'));
+const ActionItemDetail = lazyRetry(() => import('./pages/ActionItemDetail'));
+const SOPDocumentDetail = lazyRetry(() => import('./pages/SOPDocumentDetail'));
+const Billing = lazyRetry(() => import('./pages/Billing'));
+const KnowledgeBase = lazyRetry(() => import('./pages/KnowledgeBase'));
+const KnowledgeArticlePage = lazyRetry(() => import('./pages/KnowledgeArticlePage'));
+const GettingStarted = lazyRetry(() => import('./pages/GettingStarted'));
+const Departments = lazyRetry(() => import('./pages/Departments'));
+const DepartmentEval = lazyRetry(() => import('./pages/walks/DepartmentEval'));
+const Gamification = lazyRetry(() => import('./pages/Gamification'));
+const FollowUps = lazyRetry(() => import('./pages/FollowUps'));
+const Templates = lazyRetry(() => import('./pages/Templates'));
+const DataIntegrations = lazyRetry(() => import('./pages/DataIntegrations'));
+const Support = lazyRetry(() => import('./pages/Support'));
 
 function AppRoutes() {
   return (
@@ -63,6 +82,8 @@ function AppRoutes() {
         <Route path="/pricing" element={<Pricing />} />
         <Route path="/request-demo" element={<RequestDemo />} />
         <Route path="/signup" element={<Signup />} />
+        <Route path="/compare" element={<Compare />} />
+        <Route path="/compare/:slug" element={<Compare />} />
       </Route>
 
       {/* Protected routes */}
@@ -146,6 +167,7 @@ export default function App() {
     <BrowserRouter>
       <AuthProvider>
         <KnowledgeProvider>
+          <OfflineBanner />
           <Suspense fallback={<div className="min-h-screen" />}>
             <AppRoutes />
           </Suspense>
